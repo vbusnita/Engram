@@ -105,20 +105,13 @@ function parseYaml(text) {
       i++;
       while (i < lines.length && lines[i].match(/^\s+-/)) {
         const itemLine = lines[i];
-        // check if this is a complex item (object with nested keys)
-        const simpleMatch = itemLine.match(/^\s+-\s+"?([^"]*)"?\s*$/);
-        if (simpleMatch) {
-          arr.push(castValue(simpleMatch[1]));
-          i++;
-        } else {
-          // complex array item — parse as object
+        // Try complex (object) first: "- key: value" indicates an object item.
+        // Otherwise fall through to simple scalar handling.
+        const firstKv = itemLine.match(/^\s+-\s+(\w[\w_-]*):\s*(.*)/);
+        if (firstKv) {
           const obj = {};
-          const firstKv = itemLine.match(/^\s+-\s+(\w[\w_-]*):\s*(.*)/);
-          if (firstKv) {
-            obj[firstKv[1]] = castValue(firstKv[2].trim());
-          }
+          obj[firstKv[1]] = castValue(firstKv[2].trim());
           i++;
-          // gather continuation keys at deeper indent
           while (i < lines.length) {
             const contMatch = lines[i].match(/^\s{4,}(\w[\w_-]*):\s*(.*)/);
             if (contMatch) {
@@ -127,6 +120,10 @@ function parseYaml(text) {
             } else break;
           }
           arr.push(obj);
+        } else {
+          const simpleMatch = itemLine.match(/^\s+-\s+"?([^"]*)"?\s*$/);
+          if (simpleMatch) arr.push(castValue(simpleMatch[1]));
+          i++;
         }
       }
       result[key] = arr;

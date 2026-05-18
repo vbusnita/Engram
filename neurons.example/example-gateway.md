@@ -8,7 +8,7 @@ discovery_method: manual
 confidence_score: 1.0
 edges:
   - target: example-ap
-    type: connects
+    type: connected_to
     weight: 0.9
 ---
 
