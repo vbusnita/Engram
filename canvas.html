@@ -538,8 +538,8 @@ function pulseHighlights() {
     } else {
       // Default: restore base glow. Without this branch, exiting a previous
       // focus-dim or pulse leaves emissive/halo stuck at the last value written.
-      obj.material.emissiveIntensity = n.phantom ? 0.0 : 1.5;
-      if (obj.haloMat) obj.haloMat.opacity = 0.10;
+      obj.material.emissiveIntensity = n.phantom ? 0.0 : 2.0;
+      if (obj.haloMat) obj.haloMat.opacity = 0.28;
     }
   }
 }
@@ -686,7 +686,8 @@ function clearScene() {
 
   for (const { mesh, material } of edgeObjects) {
     edgeGroup.remove(mesh);
-    material.dispose();   // geometry is the shared UNIT_CYLINDER — don't dispose
+    if (mesh.geometry) mesh.geometry.dispose();
+    material.dispose();
   }
   edgeObjects = [];
 
@@ -730,13 +731,13 @@ function createNodeObject(n) {
     haloMat = new THREE.MeshBasicMaterial({
       color: col,
       transparent: true,
-      opacity: 0.10,
+      opacity: 0.28,
       depthWrite: false,
       side: THREE.BackSide,
       blending: THREE.AdditiveBlending,
     });
     haloMesh = new THREE.Mesh(sphereGeom(), haloMat);
-    haloMesh.scale.setScalar(2.8);
+    haloMesh.scale.setScalar(3.6);
     haloMesh.raycast = () => {};
     mesh.add(haloMesh);
   }
@@ -749,6 +750,15 @@ function createNodeObject(n) {
   mesh.add(label);
 
   nodeObjects.set(n.id, { mesh, material, haloMesh, haloMat, label, labelDiv });
+}
+
+// Deterministic per-edge "bend" angle so two edges between the same pair
+// don't overlap and so each edge has its own personality.
+function edgeBendAngle(srcId, tgtId) {
+  const s = (srcId || '') + '|' + (tgtId || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return ((h >>> 0) % 360) * (Math.PI / 180);
 }
 
 function createEdgeObject(link) {
@@ -770,18 +780,21 @@ function createEdgeObject(link) {
   const material = new THREE.MeshStandardMaterial({
     color: colHex,
     emissive: phantomEdge ? 0x000000 : colHex,
-    emissiveIntensity: phantomEdge ? 0.0 : 0.7,
+    emissiveIntensity: phantomEdge ? 0.0 : 1.0,
     roughness: phantomEdge ? 0.98 : 0.45,
     metalness: 0.0,
-    flatShading: true,
+    flatShading: false,
     transparent: true,
-    opacity: phantomEdge ? 0.28 : 0.55,
+    opacity: phantomEdge ? 0.28 : 0.65,
     depthWrite: !phantomEdge,
   });
-  const mesh = new THREE.Mesh(unitCylinder(), material);
+  // Start with a tiny placeholder geometry; onTick replaces it each frame.
+  const geom = new THREE.BufferGeometry();
+  const mesh = new THREE.Mesh(geom, material);
   mesh.matrixAutoUpdate = true;
   edgeGroup.add(mesh);
-  edgeObjects.push({ mesh, material, link, phantomEdge });
+  const bend = edgeBendAngle(srcId, tgtId);
+  edgeObjects.push({ mesh, material, link, phantomEdge, bend });
 }
 
 function rebuildHulls() {
@@ -1041,17 +1054,46 @@ function onTick() {
     if (!obj) continue;
     obj.mesh.position.set(n.x, n.y, n.z || 0);
   }
+  // Curved dendritic edges. Each tick we rebuild a per-edge TubeGeometry
+  // from a 3-point Catmull-Rom curve (src → bent midpoint → tgt). The
+  // midpoint is offset perpendicular to the edge axis by ~18% of the edge
+  // length, rotated around the axis by a deterministic per-edge angle so
+  // edges in the same general direction don't all bow the same way.
+  // For 8–100 edges this rebuild is cheap; if we grow past ~500, switch
+  // to a static-geometry-with-position-update strategy.
+  const _curveVecA = new THREE.Vector3();
+  const _curveVecB = new THREE.Vector3();
+  const _curveUp   = new THREE.Vector3(0, 1, 0);
+  const _curveAlt  = new THREE.Vector3(1, 0, 0);
   for (const eo of edgeObjects) {
     const s = eo.link.source, t = eo.link.target;
     if (!s || !t || typeof s === 'string' || typeof t === 'string') continue;
     const sz = s.z || 0, tz = t.z || 0;
     const dx = t.x - s.x, dy = t.y - s.y, dz = tz - sz;
     const len = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-    eo.mesh.position.set((s.x + t.x) / 2, (s.y + t.y) / 2, (sz + tz) / 2);
-    TMP_DIR.set(dx / len, dy / len, dz / len);
-    eo.mesh.quaternion.setFromUnitVectors(TMP_UP, TMP_DIR);
-    const radius = 0.22 + 0.38 * (eo.link.weight || 0.5);
-    eo.mesh.scale.set(radius, len, radius);
+
+    // Perpendicular to edge axis; rotate around axis by per-edge bend angle.
+    _curveVecA.set(dx / len, dy / len, dz / len);
+    let perp = _curveVecB.copy(_curveUp).cross(_curveVecA);
+    if (perp.lengthSq() < 0.01) perp = _curveVecB.copy(_curveAlt).cross(_curveVecA);
+    perp.normalize().applyAxisAngle(_curveVecA, eo.bend);
+
+    const offset = len * 0.18;
+    const mx = (s.x + t.x) / 2 + perp.x * offset;
+    const my = (s.y + t.y) / 2 + perp.y * offset;
+    const mz = (sz + tz) / 2  + perp.z * offset;
+
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(s.x, s.y, sz),
+      new THREE.Vector3(mx, my, mz),
+      new THREE.Vector3(t.x, t.y, tz),
+    ], false, 'catmullrom', 0.5);
+
+    const radius = 0.45 + 0.55 * (eo.link.weight || 0.5);
+    const segments = 16;
+    const newGeom = new THREE.TubeGeometry(curve, segments, radius, 6, false);
+    if (eo.mesh.geometry) eo.mesh.geometry.dispose();
+    eo.mesh.geometry = newGeom;
   }
   if (tickCount % 12 === 0) rebuildHulls();
   if (tickCount % 20 === 0) fitBrainShell();
