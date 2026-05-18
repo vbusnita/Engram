@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Engram .gitignore
+#
+# User data lives OUTSIDE this repo by design (see SECURITY.md). The entries
+# here are defense-in-depth — they catch user data, secrets, and local junk
+# that might drift into the working tree by accident.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── User data (defensive — should never be in the repo anyway) ───
+# If someone overrides ENGRAM_DATA_DIR to point inside the repo, these guard.
+neurons/
+logs/
+runs/*/
+!runs/README.md
+!runs/REVIEW_TEMPLATE.md
+neurons.private/
+neurons.local/
+*.engram-data/
+
+# ─── Secrets ───
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+id_rsa*
+id_dsa*
+id_ed25519*
+id_ecdsa*
+*_rsa
+*_dsa
+*_ed25519
+*_ecdsa
+.ssh/
+secrets/
+credentials/
+*.secrets.json
+*.credentials.json
+
+# ─── Node / Bun ───
+node_modules/
+**/node_modules/
+*.log
+
+# ─── Local Claude Code settings (also globally ignored, defensive) ───
+.claude/settings.local.json
+
+# ─── IDEs ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS junk ───
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+# ─── Misc tmp ───
+*.bak
+*.tmp
+.cache/

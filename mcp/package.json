@@ -1,0 +1,18 @@
+{
+  "name": "engram-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for Digital Engram — exposes the Engram graph as tools any MCP-capable agent can use.",
+  "main": "src/server.ts",
+  "scripts": {
+    "start": "bun src/server.ts",
+    "typecheck": "bun --check src/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}

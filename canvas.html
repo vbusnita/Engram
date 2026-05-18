@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engram — Infrastructure Map</title>
+<style>
+  :root {
+    --bg:      #1e1e2e;
+    --surface: #181825;
+    --overlay: #11111b;
+    --border:  #313244;
+    --subtle:  #45475a;
+    --dim:     #a6adc8;
+    --text:    #cdd6f4;
+    --blue:    #89b4fa;
+    --green:   #a6e3a1;
+    --red:     #f38ba8;
+    --purple:  #cba6f7;
+    --amber:   #f9e2af;
+    --teal:    #94e2d5;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+
+  /* ── Top bar ─────────────────────────────────────────────── */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; height: 42px; z-index: 100;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 16px; gap: 18px;
+  }
+  .brand { font-weight: bold; font-size: 14px; color: var(--blue); letter-spacing: 0.12em; }
+  .brand span { color: var(--dim); font-weight: normal; font-size: 11px; letter-spacing: 0; margin-left: 8px; }
+  #stats { color: var(--dim); font-size: 11px; display: flex; gap: 14px; }
+  #stats b { color: var(--text); }
+  #search-box {
+    background: var(--overlay); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 10px; border-radius: 4px; font-size: 11px;
+    font-family: inherit; width: 200px; outline: none;
+  }
+  #search-box:focus { border-color: var(--blue); }
+  #search-box::placeholder { color: var(--subtle); }
+
+  #focus-indicator {
+    display: none; align-items: center; gap: 6px; font-size: 11px;
+    color: var(--text); background: var(--overlay); border: 1px solid var(--blue);
+    padding: 3px 8px; border-radius: 3px; flex-shrink: 0;
+  }
+  #focus-indicator.active { display: flex; }
+  #focus-indicator .fi-label { color: var(--dim); letter-spacing: 0.08em; }
+  #focus-indicator .fi-name  { color: var(--blue); font-weight: 600; }
+  #focus-indicator .fi-clear {
+    cursor: pointer; color: var(--subtle); padding: 0 4px; line-height: 1;
+    font-size: 14px; transition: color 0.15s;
+  }
+  #focus-indicator .fi-clear:hover { color: var(--text); }
+
+  #rotate-toggle {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 6px; font-size: 10px;
+    color: var(--subtle); letter-spacing: 0.08em; cursor: pointer; user-select: none;
+    background: var(--overlay); border: 1px solid var(--border);
+    padding: 4px 9px; border-radius: 3px; flex-shrink: 0;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  #rotate-toggle:hover { color: var(--text); border-color: var(--subtle); }
+  #rotate-toggle b { color: var(--dim); font-weight: 600; }
+  #rotate-toggle.on { color: var(--blue); border-color: var(--blue); }
+  #rotate-toggle.on b { color: var(--blue); }
+
+  /* ── Viewport ────────────────────────────────────────────── */
+  #viewport {
+    position: fixed; top: 42px; left: 0; right: 0; bottom: 38px;
+    overflow: hidden;
+  }
+  #viewport canvas { display: block; }
+  #viewport .label-root {
+    position: absolute; top: 0; left: 0; pointer-events: none;
+  }
+
+  /* ── Labels (CSS2DRenderer) ─────────────────────────────── */
+  .kcp-label {
+    color: var(--text);
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    background: rgba(24, 24, 37, 0.72);
+    padding: 2px 7px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    transition: opacity 0.15s, border-color 0.15s;
+    letter-spacing: 0.02em;
+  }
+  .kcp-label.phantom {
+    color: var(--subtle);
+    border-style: dashed;
+    font-style: italic;
+  }
+  .kcp-label.selected {
+    border-color: var(--blue);
+    color: var(--blue);
+  }
+
+  /* ── Detail panel (floating overlay, top-left) ───────────── */
+  #detail {
+    position: fixed; top: 54px; left: 16px;
+    width: auto; min-width: 300px; max-width: 440px; max-height: calc(100vh - 110px);
+    background: #181825;
+    border: 1px solid #313244;
+    border-radius: 8px;
+    z-index: 200; opacity: 0; pointer-events: none;
+    transform: translateY(-6px); transition: all 0.18s cubic-bezier(0.23, 1, 0.32, 1);
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(137, 180, 250, 0.08);
+  }
+  #detail.open { opacity: 1; pointer-events: auto; transform: translateY(0); }
+  .detail-header {
+    padding: 14px 16px; border-bottom: 1px solid #313244;
+    display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+    background: #11111b;
+  }
+  .detail-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .detail-close { margin-left: auto; background: none; border: none; color: #6c7086;
+    font-size: 20px; cursor: pointer; padding: 0 6px; line-height: 1; }
+  .detail-close:hover { color: #cdd6f4; }
+  .detail-badges {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .detail-prov {
+    display: flex; flex-wrap: wrap; gap: 4px 14px;
+    font-size: 11px; color: var(--dim); line-height: 1.5;
+  }
+  .detail-prov a { color: var(--blue); text-decoration: none; }
+  .detail-prov a:hover { text-decoration: underline; }
+  .badge { font-size: 10px; padding: 1px 8px; border-radius: 3px; background: #313244; color: #a6adc8; }
+  .detail-body {
+    padding: 14px 16px; overflow-y: auto;
+    flex: 1 1 auto; min-height: 0;
+  }
+  .detail-body h1 { color: var(--text); font-size: 1.2em; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .detail-body h2 { color: var(--blue); font-size: 1em; margin: 14px 0 6px; }
+  .detail-body h3 { color: var(--purple); font-size: 0.9em; margin: 10px 0 4px; }
+  .detail-body p  { line-height: 1.65; color: var(--text); margin-bottom: 8px; }
+  .detail-body ul, .detail-body ol { margin: 0 0 8px 18px; }
+  .detail-body li { line-height: 1.7; color: var(--text); }
+  .detail-body code { background: var(--border); color: var(--purple); padding: 1px 5px; border-radius: 3px; font-size: 0.85em; }
+  .detail-body pre { background: var(--overlay); border: 1px solid var(--border); border-radius: 5px; padding: 10px; overflow-x: auto; margin: 8px 0; white-space: pre; }
+  .detail-body pre code { background: none; color: var(--text); padding: 0; }
+  .detail-body table { width: 100%; border-collapse: collapse; font-size: 0.85em; margin: 8px 0; }
+  .detail-body th { background: var(--overlay); color: var(--blue); padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  .detail-body td { padding: 5px 10px; border-bottom: 1px solid var(--bg); color: var(--text); }
+  .detail-body strong { color: var(--text); }
+  .detail-body a { color: var(--blue); text-decoration: none; }
+
+  .detail-edges { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .detail-edges h3 { font-size: 11px; color: var(--dim); margin-bottom: 8px; letter-spacing: 0.06em; }
+  .edge-item {
+    display: flex; align-items: center; gap: 8px; padding: 4px 0;
+    font-size: 11px; cursor: pointer;
+  }
+  .edge-item:hover .edge-target { color: var(--blue); }
+  .edge-type-badge {
+    font-size: 9px; padding: 1px 5px; border-radius: 3px;
+    border: 1px solid var(--border); color: var(--dim); white-space: nowrap;
+  }
+  .edge-target { color: var(--text); }
+  .edge-dir { color: var(--subtle); font-size: 10px; }
+
+  /* ── Bottom toolbar (filter bar) ─────────────────────────── */
+  #toolbar {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 38px; z-index: 100;
+    background: var(--surface); border-top: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 16px; gap: 6px;
+    font-size: 10px;
+  }
+  .tb-section {
+    display: flex; align-items: center; gap: 4px;
+  }
+  .tb-sep {
+    width: 1px; height: 18px; background: var(--border); margin: 0 10px; flex-shrink: 0;
+  }
+  .tb-label {
+    font-size: 9px; color: var(--subtle); letter-spacing: 0.12em;
+    text-transform: uppercase; margin-right: 4px; user-select: none;
+  }
+  .tb-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 4px; cursor: pointer;
+    user-select: none; border: 1px solid transparent;
+    color: var(--subtle); background: transparent;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .tb-btn:hover { background: var(--overlay); color: var(--dim); }
+  .tb-btn.on {
+    color: var(--text); background: var(--overlay);
+    border-color: var(--border);
+  }
+  .tb-btn.on .tb-swatch { opacity: 1; }
+  .tb-btn .tb-swatch {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    opacity: 0.35; transition: opacity 0.15s;
+  }
+  .tb-btn .tb-key {
+    font-size: 8px; color: var(--subtle); border: 1px solid var(--border);
+    padding: 0 3px; border-radius: 2px; line-height: 1.4;
+  }
+
+  /* ── Empty state ─────────────────────────────────────────── */
+  #empty {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; color: var(--dim); z-index: 50; display: none;
+  }
+  #empty h2 { color: var(--text); font-size: 18px; margin-bottom: 8px; }
+  #empty p { font-size: 12px; line-height: 1.6; max-width: 400px; }
+  #empty code { color: var(--blue); background: var(--overlay); padding: 2px 6px; border-radius: 3px; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--subtle); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">Engram<span>Infrastructure Map</span></div>
+  <div id="focus-indicator">
+    <span class="fi-label">FOCUS</span>
+    <span class="fi-name" id="focus-name"></span>
+    <span class="fi-clear" id="focus-clear" title="Clear focus (Esc)">×</span>
+  </div>
+  <div id="stats"></div>
+  <div id="rotate-toggle" title="Toggle auto-rotate (R)"><b>R</b> <span>ROTATE</span></div>
+  <input id="search-box" type="text" placeholder="Search neurons… ( / )">
+</div>
+
+<div id="viewport"></div>
+
+<div id="detail">
+  <div class="detail-header">
+    <div class="detail-title">
+      <span id="detail-icon"></span>
+      <span id="detail-name"></span>
+      <button class="detail-close" id="detail-close">&times;</button>
+    </div>
+    <div class="detail-badges" id="detail-badges"></div>
+    <div class="detail-prov" id="detail-prov"></div>
+  </div>
+  <div class="detail-body" id="detail-body"></div>
+</div>
+
+<div id="toolbar"></div>
+
+<div id="empty">
+  <h2>Engram is empty</h2>
+  <p>This is a clean infrastructure map. Hermes (or any agent) will populate it by discovering and mapping your systems.</p>
+  <p style="margin-top: 10px; color: var(--dim); font-size: 11px;">
+    Use the MCP tools to create neurons and watch the brain grow.
+  </p>
+</div>
+
+<!-- Layout engine: d3-force-3d depends on d3-binarytree (1D) and d3-octree (3D)
+     being present on the d3 global; d3 v7 only ships d3-quadtree (2D), so the
+     tree packages must load before d3-force-3d. -->
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-binarytree@1/dist/d3-binarytree.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-octree@1/dist/d3-octree.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-force-3d@3.0.5/dist/d3-force-3d.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// ═══════════════════════════════════════════════════════════════
+//  Engram Canvas — Three.js WebGL infrastructure graph
+// ═══════════════════════════════════════════════════════════════
+
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+
+// ── Config ────────────────────────────────────────────────────
+
+// Source-driven palette. Each source_system (proxmox, unifi, truenas, ...) gets
+// a hue family from schema/known_systems.json. Base = saturated mid-light for
+// low-degree nodes, hub = deep saturated for high-degree nodes.
+let SOURCE_PALETTES = {};                              // populated from /systems at boot
+const DEFAULT_SOURCE_PALETTE = { hue: 285 };           // violet fallback
+const NEURON_DEGREE_SATURATION = 10;
+const COLOR_PHANTOM = 0x5a5a88;  // dim violet-gray — visible but clearly dormant
+
+// Highlight state colors — set via MCP /mcp/highlight. Saturated LED tones.
+const HIGHLIGHT_COLOR = {
+  critical:   0xee1030,  // deep vivid red
+  warning:    0xff8800,  // deep amber-orange
+  active:     0x00dd60,  // vivid LED green
+  monitoring: 0x00bbcc,  // vivid cyan
+};
+
+const INFRASTRUCTURE_COLOR = 0x89b4fa;  // blue body color for live neurons
+const EDGE_DEFAULT = 0x303050;          // fallback for unresolvable endpoints
+
+const ENTITY_ICON = {
+  component: '\u2B21',  // hexagon
+  resource:  '\u25C6',  // diamond
+  network:   '\u25C7',  // outline diamond
+  security:  '\u25A3',  // square in square
+  device:    '\u2699',  // gear
+};
+
+const BOUND_PALETTE = [0x55ccff, 0x22ee66, 0xaa66ff, 0xffaa22, 0xee1030, 0x00bbcc];
+const BOUNDARY_COLOR = {};
+
+const SPHERE_RADIUS = 5.78;
+// Sphere scale = BASE + STEP * sqrt(degree). Degree 0 → 0.75, 1 → 1.05, 4 → 1.35, 9 → 1.65.
+const DEGREE_SCALE_BASE = 0.75;
+const DEGREE_SCALE_STEP = 0.30;
+
+const LINK_DISTANCE = 160;
+const CHARGE_STRENGTH = -600;
+
+// ── State ─────────────────────────────────────────────────────
+
+let graph = { nodes: [], edges: [], boundaries: [], meta: {} };
+let sim = null;
+let simNodes = [];
+let simLinks = [];
+
+let scene, camera, renderer, labelRenderer, controls, raycaster, pointer;
+let nodeGroup, edgeGroup, hullGroup, brainShell;
+const nodeObjects = new Map();   // id → { mesh, material, label, labelDiv }
+let edgeObjects = [];            // { line, material, link }
+let hullObjects = [];
+let selectedId = null;
+let focusedId = null;
+let focusCluster = null;   // Set<id> when focused, null otherwise — read by pulseHighlightedNeurons each frame
+const FOCUS_HOPS = 2;
+let hoveredId = null;
+// source_system filter — populated on first buildLegend from whatever the graph contains.
+// Nodes with no source_system bypass this filter (they're phantoms or unclassified).
+const activeSources = new Set();
+let _sourcesInitialized = false;
+let _lastFrameMs = 0;
+let downPoint = null;
+let nodeDragState = null;   // { node, plane, offset, pointerId }
+
+// ── DOM refs ──────────────────────────────────────────────────
+
+const elViewport    = document.getElementById('viewport');
+const elStats       = document.getElementById('stats');
+const elSearch      = document.getElementById('search-box');
+const elDetail      = document.getElementById('detail');
+const elEmpty       = document.getElementById('empty');
+
+// ── Init ──────────────────────────────────────────────────────
+
+mermaid.initialize({ startOnLoad: false, theme: 'dark',
+  themeVariables: { primaryColor: '#1e1e2e', primaryTextColor: '#cdd6f4',
+    primaryBorderColor: '#89b4fa', lineColor: '#89b4fa' }
+});
+
+initThree();
+
+(async function initData() {
+  try {
+    const sysRes = await fetch('/systems');
+    const sysJson = await sysRes.json();
+    SOURCE_PALETTES = sysJson.systems || {};
+    if (sysJson._default) SOURCE_PALETTES._default = sysJson._default;
+    _paletteCache.clear();
+  } catch (e) {
+    console.warn('Failed to fetch /systems — using default palette:', e);
+  }
+  await loadGraph();
+  rebuildScene();
+  connectSSE();
+  buildLegend();
+
+  window.addEventListener('keydown', onKey);
+  elSearch.addEventListener('input', onSearch);
+  document.getElementById('detail-close').addEventListener('click', closeDetail);
+  document.getElementById('focus-clear').addEventListener('click', clearFocus);
+  document.getElementById('rotate-toggle').addEventListener('click', () => setAutoRotate(!controls.autoRotate));
+
+})();
+
+function initThree() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1e1e2e);
+  scene.fog = new THREE.Fog(0x1e1e2e, 700, 2600);
+
+  const w = elViewport.clientWidth, h = elViewport.clientHeight;
+  camera = new THREE.PerspectiveCamera(55, w / h, 1, 6000);
+  camera.position.set(0, 0, 900);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(w, h);
+  elViewport.appendChild(renderer.domElement);
+
+  labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(w, h);
+  labelRenderer.domElement.classList.add('label-root');
+  elViewport.appendChild(labelRenderer.domElement);
+
+  // Very dark ambient so emissive dominates — neurons are light sources, not lit objects.
+  scene.add(new THREE.AmbientLight(0x080810, 0.3));
+  const hemi = new THREE.HemisphereLight(0x0a0a20, 0x000000, 0.25);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.15);
+  dir.position.set(300, 500, 700);
+  scene.add(dir);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
+  controls.rotateSpeed = 0.75;
+
+  nodeGroup = new THREE.Group();
+  edgeGroup = new THREE.Group();
+  hullGroup = new THREE.Group();
+  scene.add(nodeGroup);
+  scene.add(edgeGroup);
+  scene.add(hullGroup);
+  controls.autoRotate = false;
+  controls.autoRotateSpeed = 0.6;
+  controls.zoomSpeed = 0.9;
+  controls.panSpeed = 0.9;
+  controls.screenSpacePanning = true;
+  controls.minDistance = 80;
+  controls.maxDistance = 3500;
+  // Intuitive mouse mapping: left-drag rotates/tilts, right-drag pans,
+  // middle or wheel dollies. Keyboard arrows pan as a bonus.
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: THREE.MOUSE.PAN,
+  };
+  controls.keys = { LEFT: 'ArrowLeft', UP: 'ArrowUp', RIGHT: 'ArrowRight', BOTTOM: 'ArrowDown' };
+  controls.listenToKeyEvents(window);
+
+  brainShell = createBrainShell();
+  pointer = new THREE.Vector2();
+  raycaster = new THREE.Raycaster();
+  scene.add(brainShell);
+  renderer.domElement.addEventListener('pointerup', onPointerUp);
+  renderer.domElement.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('resize', onResize);
+
+  animate();
+
+  // Direct click handler for opening detail
+  renderer.domElement.addEventListener("click", function(e) {
+    setPointer(e);
+    raycaster.setFromCamera(pointer, camera);
+    const hits = raycaster.intersectObjects(nodeGroup.children, false);
+    if (hits.length > 0) {
+      const id = hits[0].object.userData.id;
+      if (id) openDetail(id);
+    }
+  });
+
+}
+
+function onResize() {
+  const w = elViewport.clientWidth, h = elViewport.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  labelRenderer.setSize(w, h);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const now = Date.now();
+  _lastFrameMs = now;
+  controls.update();
+  pulseHighlights();
+
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+
+function pulseHighlights() {
+  const t = Date.now() / 1000;
+  for (const [id, obj] of nodeObjects) {
+    const n = simNodes.find(x => x.id === id);
+    if (!n) continue;
+    // In focus mode, non-cluster nodes go quiet.
+    if (focusCluster && !focusCluster.has(id)) {
+      obj.material.emissiveIntensity = 0.05;
+      if (obj.haloMat) obj.haloMat.opacity = 0.0;
+      continue;
+    }
+    // Highlighted neurons pulse body + halo. State comes from MCP /mcp/highlight.
+    const state = n.highlight && n.highlight.state;
+    if (state === 'critical') {
+      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 1.0);
+      const shaped = Math.pow(wave, 3);
+      obj.material.emissiveIntensity = 0.05 + 3.8 * shaped;
+      if (obj.haloMat) obj.haloMat.opacity = 0.02 + 0.28 * shaped;
+    } else if (state === 'warning') {
+      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 0.4);
+      obj.material.emissiveIntensity = 0.6 + 1.4 * wave;
+      if (obj.haloMat) obj.haloMat.opacity = 0.06 + 0.16 * wave;
+    } else if (state === 'active') {
+      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 0.5);
+      obj.material.emissiveIntensity = 0.5 + 1.0 * wave;
+      if (obj.haloMat) obj.haloMat.opacity = 0.06 + 0.14 * wave;
+    } else if (state === 'monitoring') {
+      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 0.6);
+      obj.material.emissiveIntensity = 0.8 + 1.2 * wave;
+      if (obj.haloMat) obj.haloMat.opacity = 0.04 + 0.06 * wave;
+    } else {
+      // Default: restore base glow. Without this branch, exiting a previous
+      // focus-dim or pulse leaves emissive/halo stuck at the last value written.
+      obj.material.emissiveIntensity = n.phantom ? 0.0 : 1.5;
+      if (obj.haloMat) obj.haloMat.opacity = 0.10;
+    }
+  }
+}
+
+// ── Geometry helpers ──────────────────────────────────────────
+
+let SPHERE_GEOM = null;
+function sphereGeom() {
+  // Low segment count + flatShading = visible facets that scatter light at
+  // different angles — diamond/LED crystalline look rather than smooth orb.
+  if (!SPHERE_GEOM) SPHERE_GEOM = new THREE.SphereGeometry(SPHERE_RADIUS, 10, 7);
+  return SPHERE_GEOM;
+}
+
+// Procedural brain-shaped outer shell. Two ellipsoidal hemispheres displaced
+// with layered sine-noise to fake gyri/sulci, rendered as a low-opacity
+// wireframe so it orients the view without obscuring neurons. Unit-sized at
+// creation; scaled to the graph bounds via fitBrainShell().
+function createBrainShell() {
+  const group = new THREE.Group();
+  group.name = 'brainShell';
+  group.renderOrder = -1;  // draw before neurons so they sit "inside"
+
+  const makeHemisphere = (sign) => {
+    const geom = new THREE.SphereGeometry(1, 56, 40);
+    const pos = geom.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+      // Layered sine-noise for wrinkle displacement
+      const n =
+        0.055 * Math.sin(6 * v.x + 2 * v.y) +
+        0.045 * Math.cos(5 * v.y + 3 * v.z) +
+        0.035 * Math.sin(7 * v.z + 4 * v.x);
+      v.multiplyScalar(1 + n);
+      // Brain-ish proportions: elongated front-back, flatter top-bottom
+      v.x *= 0.92;
+      v.y *= 0.80;
+      v.z *= 1.18;
+      // Flatten the medial side so the two hemispheres leave a longitudinal fissure
+      if (sign * v.x < 0) v.x *= 0.35;
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    pos.needsUpdate = true;
+    geom.computeVertexNormals();
+
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x3a3a80,   // dim violet-blue — just bright enough to read as a shell
+      wireframe: true,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    // Offset along X to separate the hemispheres at the fissure
+    mesh.position.x = sign * 0.06;
+    mesh.raycast = () => {};  // not pickable
+    return mesh;
+  };
+
+  group.add(makeHemisphere(-1));
+  group.add(makeHemisphere(1));
+  group.scale.setScalar(400);  // placeholder; fitBrainShell sets real size
+  return group;
+}
+
+function fitBrainShell() {
+  if (!brainShell || !simNodes || simNodes.length === 0) return;
+  let maxR = 0;
+  for (const n of simNodes) {
+    const r = Math.hypot(n.x || 0, n.y || 0, n.z || 0);
+    if (r > maxR) maxR = r;
+  }
+  const target = Math.max(maxR * 1.55 + 120, 320);
+  // Smooth toward target so live layout changes don't snap the shell
+  const cur = brainShell.scale.x;
+  const next = cur + (target - cur) * 0.15;
+  brainShell.scale.setScalar(next);
+}
+
+// Unit cylinder (radius 1, length 1) reused by every edge. Scaled each tick to
+// stretch between the two endpoint neurons. Low segment count keeps the facets
+// visible so the flat shading reads the same as the spheres.
+let UNIT_CYLINDER = null;
+function unitCylinder() {
+  if (!UNIT_CYLINDER) UNIT_CYLINDER = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
+  return UNIT_CYLINDER;
+}
+const TMP_UP   = new THREE.Vector3(0, 1, 0);
+const TMP_DIR  = new THREE.Vector3();
+
+function degreeScale(degree) {
+  return DEGREE_SCALE_BASE + DEGREE_SCALE_STEP * Math.sqrt(Math.max(0, degree));
+}
+
+const _paletteCache = new Map();
+function _getPalette(src) {
+  const key = src || '_default';
+  if (_paletteCache.has(key)) return _paletteCache.get(key);
+  const sys = SOURCE_PALETTES[key] || DEFAULT_SOURCE_PALETTE;
+  const hue = (sys.hue ?? 285) / 360;
+  // Base: vibrant mid-light. Hub: deep saturated. Both in same hue family.
+  const base = new THREE.Color().setHSL(hue, 0.78, 0.58);
+  const hub  = new THREE.Color().setHSL(hue, 0.88, 0.28);
+  const entry = { base, hub };
+  _paletteCache.set(key, entry);
+  return entry;
+}
+const _NEURON_PHANTOM_COL = new THREE.Color(COLOR_PHANTOM);
+
+function neuronColor(degree, source_system) {
+  const p = _getPalette(source_system);
+  const t = Math.min(1, Math.sqrt(Math.max(0, degree)) / Math.sqrt(NEURON_DEGREE_SATURATION));
+  const c = new THREE.Color().copy(p.base);
+  c.lerpHSL(p.hub, t);
+  return c;
+}
+
+function colorForNode(n) {
+  if (n.phantom) return _NEURON_PHANTOM_COL.clone();
+  return new THREE.Color(INFRASTRUCTURE_COLOR);
+}
+
+function neuronColorCSS(degree, source_system) {
+  return '#' + neuronColor(degree, source_system).getHexString();
+}
+
+function baseOpacityFor(n) {
+  if (n.phantom) return 0.70;
+  return 0.92 + (n.confidence || 0) * 0.08;
+}
+
+// ── Scene construction ───────────────────────────────────────
+
+function clearScene() {
+  for (const { mesh, material, haloMat, label, labelDiv } of nodeObjects.values()) {
+    if (label) mesh.remove(label);
+    if (labelDiv && labelDiv.parentNode) labelDiv.parentNode.removeChild(labelDiv);
+    nodeGroup.remove(mesh);
+    material.dispose();
+    if (haloMat) haloMat.dispose();
+  }
+  nodeObjects.clear();
+
+  for (const { mesh, material } of edgeObjects) {
+    edgeGroup.remove(mesh);
+    material.dispose();   // geometry is the shared UNIT_CYLINDER — don't dispose
+  }
+  edgeObjects = [];
+
+  clearHulls();
+}
+
+function clearHulls() {
+  for (const h of hullObjects) {
+    hullGroup.remove(h);
+    if (h.geometry) h.geometry.dispose();
+    if (h.material) h.material.dispose();
+  }
+  hullObjects = [];
+}
+
+function createNodeObject(n) {
+  const col = colorForNode(n);
+  const material = new THREE.MeshStandardMaterial({
+    color: col,
+    emissive: col,
+    emissiveIntensity: n.phantom ? 0.0 : 1.5,
+    metalness: 0.05,
+    roughness: 0.08,
+    flatShading: true,
+    transparent: true,
+    opacity: baseOpacityFor(n),
+    wireframe: !!n.phantom,
+    depthWrite: true,
+  });
+  const mesh = new THREE.Mesh(sphereGeom(), material);
+  const s = degreeScale(n.degree || 0);
+  mesh.scale.setScalar(s);
+  mesh.userData = { id: n.id };
+  nodeGroup.add(mesh);
+
+  // Soft additive halo — a slightly larger sphere behind each live neuron.
+  // BackSide renders the inner surface so it glows outward from the neuron edge.
+  // Additive blending brightens what's behind it.
+  let haloMesh = null, haloMat = null;
+  if (!n.phantom) {
+    haloMat = new THREE.MeshBasicMaterial({
+      color: col,
+      transparent: true,
+      opacity: 0.10,
+      depthWrite: false,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+    });
+    haloMesh = new THREE.Mesh(sphereGeom(), haloMat);
+    haloMesh.scale.setScalar(2.8);
+    haloMesh.raycast = () => {};
+    mesh.add(haloMesh);
+  }
+
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'kcp-label' + (n.phantom ? ' phantom' : '');
+  labelDiv.textContent = n.display_name || n.id;
+  const label = new CSS2DObject(labelDiv);
+  label.position.set(0, SPHERE_RADIUS * s + 6, 0);
+  mesh.add(label);
+
+  nodeObjects.set(n.id, { mesh, material, haloMesh, haloMat, label, labelDiv });
+}
+
+function createEdgeObject(link) {
+  const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+  const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+  const sn = simNodes.find(x => x.id === srcId);
+  const tn = simNodes.find(x => x.id === tgtId);
+  const phantomEdge = (sn && sn.phantom) || (tn && tn.phantom);
+
+  let col;
+  if (phantomEdge) {
+    col = new THREE.Color(0x4a4a68);
+  } else {
+    const sc = sn ? colorForNode(sn) : new THREE.Color(EDGE_DEFAULT);
+    const tc = tn ? colorForNode(tn) : new THREE.Color(EDGE_DEFAULT);
+    col = sc.clone().lerp(tc, 0.5);
+  }
+  const colHex = col.getHex();
+  const material = new THREE.MeshStandardMaterial({
+    color: colHex,
+    emissive: phantomEdge ? 0x000000 : colHex,
+    emissiveIntensity: phantomEdge ? 0.0 : 0.7,
+    roughness: phantomEdge ? 0.98 : 0.45,
+    metalness: 0.0,
+    flatShading: true,
+    transparent: true,
+    opacity: phantomEdge ? 0.28 : 0.55,
+    depthWrite: !phantomEdge,
+  });
+  const mesh = new THREE.Mesh(unitCylinder(), material);
+  mesh.matrixAutoUpdate = true;
+  edgeGroup.add(mesh);
+  edgeObjects.push({ mesh, material, link, phantomEdge });
+}
+
+function rebuildHulls() {
+  clearHulls();
+  const groups = new Map();
+  const groupSources = new Map();   // boundary -> Set<source_system>
+  for (const n of simNodes) {
+    if (n.boundary === '_unbound' || n.phantom) continue;
+    // Skip filtered-out nodes so the hull reshapes as toggles change visible set.
+    if (!nodeLayerVisible(n)) continue;
+    if (!groups.has(n.boundary)) {
+      groups.set(n.boundary, []);
+      groupSources.set(n.boundary, new Set());
+    }
+    groups.get(n.boundary).push(new THREE.Vector3(n.x, n.y, n.z || 0));
+    if (n.source_system) groupSources.get(n.boundary).add(n.source_system);
+  }
+  for (const [bid, pts] of groups) {
+    if (pts.length < 2) continue;   // need at least an edge to render anything
+    const col = BOUNDARY_COLOR[bid] || 0x1d6fa5;
+    const hullDomain = simNodes.find(n => n.boundary === bid)?.domain || 'infrastructure';
+    const hullSources = groupSources.get(bid);
+
+    let fillGeom = null;
+    let wireGeom = null;
+
+    if (pts.length >= 4) {
+      try {
+        const conv = new ConvexGeometry(pts);
+        fillGeom = conv;
+        wireGeom = new THREE.WireframeGeometry(conv);
+      } catch { fillGeom = null; }
+    }
+    if (!fillGeom && pts.length === 3) {
+      // Flat triangle fallback — coplanar 3-point cluster still gets visible tissue.
+      const positions = new Float32Array([
+        pts[0].x, pts[0].y, pts[0].z,
+        pts[1].x, pts[1].y, pts[1].z,
+        pts[2].x, pts[2].y, pts[2].z,
+      ]);
+      const tri = new THREE.BufferGeometry();
+      tri.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      tri.setIndex([0, 1, 2]);
+      tri.computeVertexNormals();
+      fillGeom = tri;
+      const edges = new Float32Array([
+        pts[0].x, pts[0].y, pts[0].z,  pts[1].x, pts[1].y, pts[1].z,
+        pts[1].x, pts[1].y, pts[1].z,  pts[2].x, pts[2].y, pts[2].z,
+        pts[2].x, pts[2].y, pts[2].z,  pts[0].x, pts[0].y, pts[0].z,
+      ]);
+      wireGeom = new THREE.BufferGeometry();
+      wireGeom.setAttribute('position', new THREE.BufferAttribute(edges, 3));
+    }
+    if (!fillGeom && pts.length === 2) {
+      // Two-point cluster — render only the connecting filament.
+      const seg = new Float32Array([
+        pts[0].x, pts[0].y, pts[0].z,  pts[1].x, pts[1].y, pts[1].z,
+      ]);
+      wireGeom = new THREE.BufferGeometry();
+      wireGeom.setAttribute('position', new THREE.BufferAttribute(seg, 3));
+    }
+
+    if (fillGeom) {
+      const fill = new THREE.Mesh(fillGeom, new THREE.MeshStandardMaterial({
+        color: col, emissive: col, emissiveIntensity: 0.08,
+        flatShading: true, roughness: 0.9, metalness: 0.0,
+        transparent: true, opacity: 0.09, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      fill.userData.domain = hullDomain;
+      fill.userData.sources = hullSources;
+      hullGroup.add(fill);
+      hullObjects.push(fill);
+    }
+    if (wireGeom) {
+      const wire = new THREE.LineSegments(
+        wireGeom,
+        new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.22 })
+      );
+      wire.userData.domain = hullDomain;
+      wire.userData.sources = hullSources;
+      hullGroup.add(wire);
+      hullObjects.push(wire);
+    }
+  }
+  // Triangle-overlay tissue — fills any 3-cycle in the visible edge graph,
+  // so cross-boundary connected clusters get connective surface too.
+  const visibleSet = new Set();
+  const nodeMap = new Map();
+  for (const n of simNodes) {
+    nodeMap.set(n.id, n);
+    if (nodeLayerVisible(n) && !n.phantom) visibleSet.add(n.id);
+  }
+  const adj = new Map();   // id -> Set<neighborId>
+  for (const l of simLinks) {
+    const sid = (l.source && l.source.id) || l.source;
+    const tid = (l.target && l.target.id) || l.target;
+    if (!visibleSet.has(sid) || !visibleSet.has(tid)) continue;
+    if (!adj.has(sid)) adj.set(sid, new Set());
+    if (!adj.has(tid)) adj.set(tid, new Set());
+    adj.get(sid).add(tid);
+    adj.get(tid).add(sid);
+  }
+  // Enumerate triangles once: for edge (u,v) with u<v, find common neighbors w>v.
+  const sortedIds = [...adj.keys()].sort();
+  const idRank = new Map(sortedIds.map((id, i) => [id, i]));
+  for (const u of sortedIds) {
+    const nu = adj.get(u);
+    for (const v of nu) {
+      if (idRank.get(v) <= idRank.get(u)) continue;
+      const nv = adj.get(v);
+      for (const w of nv) {
+        if (idRank.get(w) <= idRank.get(v)) continue;
+        if (!nu.has(w)) continue;
+        const a = nodeMap.get(u), b = nodeMap.get(v), c = nodeMap.get(w);
+        if (!a || !b || !c) continue;
+        const positions = new Float32Array([
+          a.x, a.y, a.z || 0,
+          b.x, b.y, b.z || 0,
+          c.x, c.y, c.z || 0,
+        ]);
+        const tri = new THREE.BufferGeometry();
+        tri.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        tri.setIndex([0, 1, 2]);
+        tri.computeVertexNormals();
+        const triSources = new Set();
+        if (a.source_system) triSources.add(a.source_system);
+        if (b.source_system) triSources.add(b.source_system);
+        if (c.source_system) triSources.add(c.source_system);
+        const triDomains = [a.domain, b.domain, c.domain].filter(Boolean);
+        const triDomain = triDomains[0] || 'infrastructure';
+        const col = BOUNDARY_COLOR[a.boundary] || BOUNDARY_COLOR[b.boundary] || 0x4a6a8a;
+        const fill = new THREE.Mesh(tri, new THREE.MeshStandardMaterial({
+          color: col, emissive: col, emissiveIntensity: 0.05,
+          flatShading: true, roughness: 0.95, metalness: 0.0,
+          transparent: true, opacity: 0.05, depthWrite: false, side: THREE.DoubleSide,
+        }));
+        fill.userData.domain = triDomain;
+        fill.userData.sources = triSources;
+        fill.userData.allDomains = triDomains;
+        hullGroup.add(fill);
+        hullObjects.push(fill);
+      }
+    }
+  }
+
+  // Apply the current domain filter immediately — hulls default to visible=true
+  // and are rebuilt every 12 ticks, so they must be filtered after each rebuild.
+  applyHullFilter();
+}
+
+// ── Force simulation ──────────────────────────────────────────
+
+function rebuildScene() {
+  if (!graph.nodes || graph.nodes.length === 0) {
+    clearScene();
+    if (sim) { sim.stop(); sim = null; }
+    elEmpty.style.display = 'block';
+    updateStats();
+    return;
+  }
+  elEmpty.style.display = 'none';
+
+  graph.boundaries.forEach((b, i) => {
+    BOUNDARY_COLOR[b.id] = BOUND_PALETTE[i % BOUND_PALETTE.length];
+  });
+
+  const prev = new Map(simNodes.map(n => [n.id, { x: n.x, y: n.y, z: n.z || 0 }]));
+  simNodes = graph.nodes.map(n => {
+    const p = prev.get(n.id);
+    return Object.assign({}, n, {
+      x: p ? p.x : (Math.random() - 0.5) * 300,
+      y: p ? p.y : (Math.random() - 0.5) * 300,
+      z: p ? p.z : (Math.random() - 0.5) * 300,
+    });
+  });
+  const nodeById = new Map(simNodes.map(n => [n.id, n]));
+  simLinks = graph.edges
+    .filter(e => nodeById.has(e.source) && nodeById.has(e.target))
+    .map(e => Object.assign({}, e));
+
+  // Tag each node with its connection count so sphere size scales with degree.
+  for (const n of simNodes) n.degree = 0;
+  for (const l of simLinks) {
+    const s = nodeById.get(l.source); if (s) s.degree++;
+    const t = nodeById.get(l.target); if (t) t.degree++;
+  }
+
+  syncActiveSources();   // must run before applyDomainFilter below
+
+  clearScene();
+  for (const n of simNodes) createNodeObject(n);
+  for (const l of simLinks) createEdgeObject(l);
+
+  if (sim) sim.stop();
+  sim = d3.forceSimulation(simNodes, 3)
+    .force('link', d3.forceLink(simLinks).id(d => d.id)
+      .distance(d => LINK_DISTANCE / (d.weight || 0.5))
+      .strength(d => 0.5 * (d.weight || 0.5)))
+    .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH).distanceMax(1000))
+    .force('center', d3.forceCenter(0, 0, 0).strength(0.04))
+    .force('cluster', clusterForce(0.12))
+    .force('collide', d3.forceCollide().radius(d => SPHERE_RADIUS * degreeScale(d.degree || 0) + 6).strength(0.8))
+    .alphaDecay(0.02)
+    .on('tick', onTick);
+
+  updateStats();
+  applyDomainFilter();
+}
+
+function clusterForce(strength) {
+  let nodes;
+  function force(alpha) {
+    const centroids = new Map();
+    const counts = new Map();
+    for (const n of nodes) {
+      if (!centroids.has(n.boundary)) {
+        centroids.set(n.boundary, { x: 0, y: 0, z: 0 });
+        counts.set(n.boundary, 0);
+      }
+      const c = centroids.get(n.boundary);
+      c.x += n.x; c.y += n.y; c.z += (n.z || 0);
+      counts.set(n.boundary, counts.get(n.boundary) + 1);
+    }
+    for (const [b, c] of centroids) {
+      const k = counts.get(b);
+      c.x /= k; c.y /= k; c.z /= k;
+    }
+    const k = strength * alpha;
+    for (const n of nodes) {
+      if (n.boundary === '_unbound') continue;
+      const c = centroids.get(n.boundary);
+      if (c) {
+        n.vx += (c.x - n.x) * k;
+        n.vy += (c.y - n.y) * k;
+        n.vz += (c.z - (n.z || 0)) * k;
+      }
+    }
+  }
+  force.initialize = n => { nodes = n; };
+  return force;
+}
+
+let tickCount = 0;
+function onTick() {
+  tickCount++;
+  for (const n of simNodes) {
+    const obj = nodeObjects.get(n.id);
+    if (!obj) continue;
+    obj.mesh.position.set(n.x, n.y, n.z || 0);
+  }
+  for (const eo of edgeObjects) {
+    const s = eo.link.source, t = eo.link.target;
+    if (!s || !t || typeof s === 'string' || typeof t === 'string') continue;
+    const sz = s.z || 0, tz = t.z || 0;
+    const dx = t.x - s.x, dy = t.y - s.y, dz = tz - sz;
+    const len = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+    eo.mesh.position.set((s.x + t.x) / 2, (s.y + t.y) / 2, (sz + tz) / 2);
+    TMP_DIR.set(dx / len, dy / len, dz / len);
+    eo.mesh.quaternion.setFromUnitVectors(TMP_UP, TMP_DIR);
+    const radius = 0.22 + 0.38 * (eo.link.weight || 0.5);
+    eo.mesh.scale.set(radius, len, radius);
+  }
+  if (tickCount % 12 === 0) rebuildHulls();
+  if (tickCount % 20 === 0) fitBrainShell();
+}
+
+// ── Pointer / picking ────────────────────────────────────────
+
+function setPointer(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function pickAt(e) {
+  setPointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(nodeGroup.children, false);
+  return hits.length ? hits[0].object.userData.id : null;
+}
+
+function onPointerDown(e) {
+  if (e.button !== 0) return;
+  downPoint = { x: e.clientX, y: e.clientY };
+  const id = pickAt(e);
+  if (id) startNodeDrag(id, e);
+  else downPoint.empty = true;
+}
+
+function onPointerMove(e) {
+  if (nodeDragState) { updateNodeDrag(e); return; }
+  const id = pickAt(e);
+  if (id !== hoveredId) {
+    if (id) highlightNode(id);
+    else unhighlightNode();
+  }
+}
+
+function onPointerUp(e) {
+  if (!downPoint) return;
+  const dx = e.clientX - downPoint.x, dy = e.clientY - downPoint.y;
+  const moved = Math.hypot(dx, dy) > 4;
+  const wasEmpty = downPoint.empty;
+  downPoint = null;
+  if (nodeDragState) {
+    const id = nodeDragState.node.id;
+    endNodeDrag(e, moved);
+    if (!moved) openDetail(id);
+  } else if (wasEmpty && !moved && focusedId) {
+    clearFocus();
+  }
+}
+
+// ── Node drag (with bounce-back) ─────────────────────────────
+
+function startNodeDrag(id, e) {
+  const n = simNodes.find(x => x.id === id);
+  if (!n || !sim) return;
+
+  // Build a drag plane perpendicular to the camera, passing through the node.
+  // The cursor's ray against this plane gives the intuitive "screen-space drag".
+  const planeNormal = new THREE.Vector3();
+  camera.getWorldDirection(planeNormal);
+  const nodePos = new THREE.Vector3(n.x, n.y, n.z || 0);
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, nodePos);
+
+  // Capture the cursor→plane hit and store its offset to the node, so grabbing
+  // off-center doesn't snap the node under the cursor.
+  setPointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  const initial = new THREE.Vector3();
+  const offset = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(plane, initial)) {
+    offset.copy(nodePos).sub(initial);
+  }
+
+  n.fx = n.x; n.fy = n.y; n.fz = n.z || 0;
+  sim.alphaTarget(0.3).restart();
+
+  controls.enabled = false;
+  try { renderer.domElement.setPointerCapture(e.pointerId); } catch {}
+  document.body.style.cursor = 'grabbing';
+
+  nodeDragState = { node: n, plane, offset, pointerId: e.pointerId };
+}
+
+function updateNodeDrag(e) {
+  setPointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  const pt = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(nodeDragState.plane, pt)) {
+    pt.add(nodeDragState.offset);
+    nodeDragState.node.fx = pt.x;
+    nodeDragState.node.fy = pt.y;
+    nodeDragState.node.fz = pt.z;
+  }
+}
+
+function endNodeDrag(e, wasDragged) {
+  const n = nodeDragState.node;
+  n.fx = null; n.fy = null; n.fz = null;
+
+  if (sim) {
+    if (wasDragged) sim.alphaTarget(0).alpha(0.6).restart();
+    else sim.alphaTarget(0);
+  }
+
+  controls.enabled = true;
+  try { renderer.domElement.releasePointerCapture(nodeDragState.pointerId); } catch {}
+  document.body.style.cursor = '';
+  nodeDragState = null;
+}
+
+// ── Highlight / search ──────────────────────────────────────
+
+function highlightNode(id) {
+  hoveredId = id;
+  const connected = new Set([id]);
+  for (const l of simLinks) {
+    const sid = typeof l.source === 'string' ? l.source : l.source.id;
+    const tid = typeof l.target === 'string' ? l.target : l.target.id;
+    if (sid === id) connected.add(tid);
+    if (tid === id) connected.add(sid);
+  }
+  for (const [nid, obj] of nodeObjects) {
+    const n = simNodes.find(x => x.id === nid);
+    if (n && !nodeLayerVisible(n)) {
+      obj.labelDiv.style.opacity = '0';   // filter wins over hover
+      continue;
+    }
+    const base = baseOpacityFor(n || { phantom: false, confidence: 0.5 });
+    const hit = connected.has(nid);
+    obj.material.opacity = hit ? base : 0.08;
+    obj.labelDiv.style.opacity = hit ? '1' : '0.15';
+  }
+  for (const eo of edgeObjects) {
+    const es = typeof eo.link.source === 'string' ? eo.link.source : eo.link.source.id;
+    const et = typeof eo.link.target === 'string' ? eo.link.target : eo.link.target.id;
+    const hit = es === id || et === id;
+    eo.material.opacity = hit ? 0.95 : 0.05;
+  }
+  document.body.style.cursor = 'pointer';
+}
+
+function unhighlightNode() {
+  hoveredId = null;
+  if (focusedId) { applyFocus(); document.body.style.cursor = ''; return; }
+  for (const [nid, obj] of nodeObjects) {
+    const n = simNodes.find(x => x.id === nid);
+    if (n && !nodeLayerVisible(n)) {
+      obj.labelDiv.style.opacity = '0';   // keep filtered nodes hidden
+      continue;
+    }
+    obj.material.opacity = baseOpacityFor(n || { phantom: false, confidence: 0.5 });
+    obj.labelDiv.style.opacity = '1';
+  }
+  for (const eo of edgeObjects) eo.material.opacity = 0.55;
+  document.body.style.cursor = '';
+}
+
+// ── Focus mode ──────────────────────────────────────────────
+
+function getCluster(rootId, hops) {
+  const cluster = new Set([rootId]);
+  let frontier = [rootId];
+  for (let h = 0; h < hops; h++) {
+    const next = [];
+    for (const id of frontier) {
+      for (const l of simLinks) {
+        const sid = (l.source && l.source.id) || l.source;
+        const tid = (l.target && l.target.id) || l.target;
+        if (sid === id && !cluster.has(tid)) { cluster.add(tid); next.push(tid); }
+        else if (tid === id && !cluster.has(sid)) { cluster.add(sid); next.push(sid); }
+      }
+    }
+    frontier = next;
+    if (!frontier.length) break;
+  }
+  return cluster;
+}
+
+function setFocus(id) {
+  focusedId = id;
+  const n = simNodes.find(x => x.id === id);
+  document.getElementById('focus-name').textContent = n ? (n.display_name || n.id) : id;
+  document.getElementById('focus-indicator').classList.add('active');
+  applyFocus();
+}
+
+function clearFocus() {
+  if (!focusedId) return;
+  focusedId = null;
+  focusCluster = null;
+  document.getElementById('focus-indicator').classList.remove('active');
+  for (const [nid, obj] of nodeObjects) {
+    const n = simNodes.find(x => x.id === nid);
+    if (n && !nodeLayerVisible(n)) {
+      obj.labelDiv.style.opacity = '0';
+      continue;
+    }
+    obj.material.opacity = baseOpacityFor(n || { phantom: false, confidence: 0.5 });
+    obj.labelDiv.style.opacity = '1';
+  }
+  for (const eo of edgeObjects) eo.material.opacity = 0.55;
+  for (const h of hullObjects) {
+    if (h.material) h.material.opacity = h.userData.baseOpacity || h.material.opacity;
+  }
+}
+
+function applyFocus() {
+  if (!focusedId) return;
+  const cluster = getCluster(focusedId, FOCUS_HOPS);
+  focusCluster = cluster;
+  for (const [nid, obj] of nodeObjects) {
+    const n = simNodes.find(x => x.id === nid);
+    if (n && !nodeLayerVisible(n)) {
+      obj.labelDiv.style.opacity = '0';
+      continue;
+    }
+    const inCluster = cluster.has(nid);
+    if (inCluster) {
+      obj.material.opacity = baseOpacityFor(n || { phantom: false, confidence: 0.5 });
+      obj.labelDiv.style.opacity = '1';
+    } else {
+      obj.material.opacity = 0.35;
+      obj.labelDiv.style.opacity = '0';
+    }
+  }
+  for (const eo of edgeObjects) {
+    const es = (eo.link.source && eo.link.source.id) || eo.link.source;
+    const et = (eo.link.target && eo.link.target.id) || eo.link.target;
+    const internal = cluster.has(es) && cluster.has(et);
+    eo.material.opacity = internal ? 0.85 : 0.04;
+  }
+}
+
+function onSearch() {
+  const q = elSearch.value.toLowerCase().trim();
+  for (const [nid, obj] of nodeObjects) {
+    const n = simNodes.find(x => x.id === nid);
+    if (!n) continue;
+    let match = !q;
+    if (q) {
+      match = (n.display_name || '').toLowerCase().includes(q)
+        || n.id.includes(q)
+        || (n.tags || []).some(t => t.toLowerCase().includes(q))
+        || (n.entity_type || '').includes(q)
+        || (n.boundary || '').includes(q);
+    }
+    obj.material.opacity = match ? baseOpacityFor(n) : 0.06;
+    obj.labelDiv.style.opacity = match ? '1' : '0.1';
+  }
+}
+
+// ── Camera / keys ───────────────────────────────────────────
+
+function resetCamera() {
+  animateCamera(new THREE.Vector3(0, 0, 900), new THREE.Vector3(0, 0, 0));
+}
+
+function animateCamera(endCam, endTarget, cb) {
+  const startCam = camera.position.clone();
+  const startTarget = controls.target.clone();
+  const dur = 500, t0 = performance.now();
+  function step(now) {
+    const t = Math.min(1, (now - t0) / dur);
+    const e = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2;
+    camera.position.lerpVectors(startCam, endCam, e);
+    controls.target.lerpVectors(startTarget, endTarget, e);
+    controls.update();
+    if (t < 1) requestAnimationFrame(step);
+    else if (cb) cb();
+  }
+  requestAnimationFrame(step);
+}
+
+function navigateToNode(id) {
+  const n = simNodes.find(x => x.id === id);
+  if (!n) return;
+  const target = new THREE.Vector3(n.x, n.y, n.z || 0);
+  const offset = camera.position.clone().sub(controls.target).setLength(260);
+  animateCamera(target.clone().add(offset), target, () => openDetail(id));
+}
+
+function onKey(e) {
+  if (e.key === '/' && document.activeElement !== elSearch) {
+    e.preventDefault(); elSearch.focus();
+  }
+  if (e.key === 'Escape') {
+    if (elDetail.classList.contains('open')) closeDetail();
+    else if (focusedId) clearFocus();
+    else if (document.activeElement === elSearch) elSearch.blur();
+  }
+  if (e.key === 'Home') resetCamera();
+  if ((e.key === 'r' || e.key === 'R') && document.activeElement !== elSearch) {
+    setAutoRotate(!controls.autoRotate);
+  }
+}
+
+// ── Detail panel ────────────────────────────────────────────
+
+async function openDetail(id) {
+  const node = simNodes.find(n => n.id === id);
+  if (!node || node.phantom) return;
+
+  if (selectedId && nodeObjects.has(selectedId)) {
+    nodeObjects.get(selectedId).labelDiv.classList.remove('selected');
+  }
+  selectedId = id;
+  if (nodeObjects.has(id)) {
+    nodeObjects.get(id).labelDiv.classList.add('selected');
+  }
+  setFocus(id);
+
+  const cssCol = node.phantom ? '#585b70' : neuronColorCSS(node.degree || 0, node.source_system);
+  document.getElementById('detail-icon').textContent = ENTITY_ICON[node.entity_type] || '';
+  document.getElementById('detail-icon').style.color = cssCol;
+  document.getElementById('detail-name').textContent = node.display_name;
+
+  const badges = [node.entity_type, node.source_system, node.boundary].concat(node.tags || []).filter(Boolean);
+  document.getElementById('detail-badges').innerHTML =
+    badges.map(b => `<span class="badge">${esc(b)}</span>`).join('');
+
+  let provHtml = '';
+  if (node.source_uri) {
+    const short = node.source_uri.replace(/https?:\/\//, '').slice(0, 50);
+    provHtml += `<span>Source: <a href="${esc(node.source_uri)}" target="_blank">${esc(short)}</a></span>`;
+  }
+  if (node.discovery_method) provHtml += `<span>Method: ${esc(node.discovery_method)}</span>`;
+  provHtml += `<span>Confidence: ${Math.round((node.confidence || 0) * 100)}%</span>`;
+  if (node.discovered_at) provHtml += `<span>Discovered: ${esc(node.discovered_at.slice(0, 10))}</span>`;
+  document.getElementById('detail-prov').innerHTML = provHtml;
+
+  const body = document.getElementById('detail-body');
+  body.innerHTML = '<p style="color:var(--dim)">Loading\u2026</p>';
+  elDetail.classList.add('open');
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const res = await fetch('/neuron?id=' + encodeURIComponent(id), { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error('Not found');
+    let content = await res.text();
+    content = content.replace(/^---[\s\S]*?---\s*/, '');
+    body.innerHTML = marked.parse(content);
+  } catch {
+    body.innerHTML = '<p style="color:var(--dim)">Could not load neuron content.</p>';
+  }
+
+  // edges list
+  const edgeDiv = document.createElement('div');
+  edgeDiv.className = 'detail-edges';
+  edgeDiv.innerHTML = '<h3>CONNECTIONS</h3>';
+
+  const outgoing = [], incoming = [];
+  for (const lnk of simLinks) {
+    const lsid = typeof lnk.source === 'string' ? lnk.source : lnk.source.id;
+    const ltid = typeof lnk.target === 'string' ? lnk.target : lnk.target.id;
+    if (lsid === id) outgoing.push({ type: lnk.type, targetId: ltid, label: lnk.label });
+    if (ltid === id) incoming.push({ type: lnk.type, sourceId: lsid, label: lnk.label });
+  }
+  for (const oe of outgoing) {
+    const tnode = simNodes.find(nn => nn.id === oe.targetId);
+    edgeDiv.innerHTML += `<div class="edge-item" data-nav="${esc(oe.targetId)}">
+      <span class="edge-dir">\u2192</span>
+      <span class="edge-type-badge">${esc(oe.type)}</span>
+      <span class="edge-target">${esc(tnode ? tnode.display_name : oe.targetId)}</span></div>`;
+  }
+  for (const ie of incoming) {
+    const snode = simNodes.find(nn => nn.id === ie.sourceId);
+    edgeDiv.innerHTML += `<div class="edge-item" data-nav="${esc(ie.sourceId)}">
+      <span class="edge-dir">\u2190</span>
+      <span class="edge-type-badge">${esc(ie.type)}</span>
+      <span class="edge-target">${esc(snode ? snode.display_name : ie.sourceId)}</span></div>`;
+  }
+  edgeDiv.addEventListener('click', ev => {
+    const item = ev.target.closest('.edge-item');
+    if (item && item.dataset.nav) navigateToNode(item.dataset.nav);
+  });
+  body.appendChild(edgeDiv);
+}
+
+function closeDetail() {
+  elDetail.classList.remove('open');
+  if (selectedId && nodeObjects.has(selectedId)) {
+    nodeObjects.get(selectedId).labelDiv.classList.remove('selected');
+  }
+  selectedId = null;
+  clearFocus();
+}
+
+// ── Stats / legend ──────────────────────────────────────────
+
+function nodeLayerVisible(n) {
+  if (n.phantom) return true;
+  if (n.source_system && !activeSources.has(n.source_system)) return false;
+  return true;
+}
+
+// Resolve a node reliably from the current simNodes by ID.
+// Never trusts d3's link mutation (which may be lazy) — always looks up by ID.
+function resolveNode(idOrObj) {
+  const id = idOrObj && typeof idOrObj === 'object' ? idOrObj.id : idOrObj;
+  return simNodes.find(x => x.id === id) || null;
+}
+
+function applyDomainFilter() {
+  // Nodes + labels
+  for (const [id, { mesh, label, labelDiv }] of nodeObjects) {
+    const n = resolveNode(id);
+    if (!n) continue;
+    const vis = nodeLayerVisible(n);
+    mesh.visible = vis;
+    if (label) label.visible = vis;
+    if (labelDiv) { labelDiv.style.opacity = vis ? '' : '0'; labelDiv.style.pointerEvents = vis ? '' : 'none'; }
+  }
+  // If a focus is active, re-apply it so non-cluster labels stay dimmed
+  // (filter just reset their opacity to '').
+  if (focusedId) applyFocus();
+  // Edges — hide if either endpoint's layer is inactive.
+  // Always resolve from simNodes by ID so we get full node properties
+  // regardless of whether d3 has mutated the link objects yet.
+  for (const eo of edgeObjects) {
+    const sid = eo.link.source && typeof eo.link.source === 'object' ? eo.link.source.id : eo.link.source;
+    const tid = eo.link.target && typeof eo.link.target === 'object' ? eo.link.target.id : eo.link.target;
+    const s = simNodes.find(x => x.id === sid);
+    const t = simNodes.find(x => x.id === tid);
+    eo.mesh.visible = !!(s && t && nodeLayerVisible(s) && nodeLayerVisible(t));
+  }
+  // Hulls — rebuild shape against the current visible set, not just visibility.
+  rebuildHulls();
+  buildLegend();
+}
+
+function applyHullFilter() {
+  for (const h of hullObjects) {
+    // Hide a hull when none of its member sources are active (hull of all-hidden nodes = ghost volume).
+    const sources = h.userData.sources;
+    const sourceOk = !sources || sources.size === 0 ||
+                     [...sources].some(s => activeSources.has(s));
+    h.visible = sourceOk;
+  }
+}
+
+function updateStats() {
+  elStats.innerHTML =
+    `<span><b>${graph.meta.total_neurons || 0}</b> neurons</span>` +
+    `<span><b>${graph.meta.total_edges || 0}</b> edges</span>` +
+    `<span><b>${graph.meta.phantoms || 0}</b> phantoms</span>` +
+    `<span><b>${(graph.boundaries || []).length}</b> boundaries</span>`;
+}
+
+// Populate activeSources from the current simNodes. Safe to call multiple times.
+// Must run BEFORE applyDomainFilter on first load, otherwise an empty activeSources
+// hides every tagged neuron.
+function syncActiveSources() {
+  const presentSources = new Set(simNodes.map(n => n.source_system).filter(Boolean));
+  if (!_sourcesInitialized) {
+    for (const s of presentSources) activeSources.add(s);
+    _sourcesInitialized = true;
+  } else {
+    for (const s of presentSources) {
+      if (!activeSources.has(s) && !_knownToggledOff.has(s)) activeSources.add(s);
+    }
+  }
+}
+
+function buildLegend() {
+  const bar = document.getElementById('toolbar');
+  const presentSources = new Set(simNodes.map(n => n.source_system).filter(Boolean));
+  syncActiveSources();
+
+  if (presentSources.size === 0) {
+    bar.innerHTML = '';
+    return;
+  }
+
+  let html = `<div class="tb-section"><span class="tb-label">Systems</span>`;
+  const sorted = [...presentSources].sort();
+  sorted.forEach((src) => {
+    const on = activeSources.has(src) ? ' on' : '';
+    const display = (SOURCE_PALETTES[src] && SOURCE_PALETTES[src].display_name) || src;
+    const hue = SOURCE_PALETTES[src]?.hue ?? SOURCE_PALETTES._default?.hue ?? 285;
+    const hex = `hsl(${hue}, 65%, 65%)`;
+    html += `<div class="tb-btn${on}" data-kind="source" data-key="${src}">` +
+      `<div class="tb-swatch" style="background:${hex}"></div>` +
+      `<span>${display}</span>` +
+      `</div>`;
+  });
+  html += `</div>`;
+
+  bar.innerHTML = html;
+  bar.querySelectorAll('.tb-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      toggleFilter(btn.dataset.kind, btn.dataset.key, btn);
+    });
+  });
+}
+
+// Tracks sources the user explicitly turned off, so new SSE rebuilds don't flip them back on.
+const _knownToggledOff = new Set();
+
+function toggleFilter(kind, key, btn) {
+  const isOn = btn ? btn.classList.contains('on') : null;
+  if (kind === 'source') {
+    if (isOn && activeSources.size === 1) return;
+    if (isOn) { activeSources.delete(key); _knownToggledOff.add(key); }
+    else       { activeSources.add(key);    _knownToggledOff.delete(key); }
+  }
+  if (btn) btn.classList.toggle('on');
+  applyDomainFilter();
+}
+
+// ── SSE ─────────────────────────────────────────────────────
+
+async function loadGraph() {
+  try {
+    const res = await fetch('/graph');
+    graph = await res.json();
+  } catch (e) {
+    console.error('Failed to fetch graph:', e);
+    graph = { nodes: [], edges: [], boundaries: [], meta: {} };
+  }
+}
+
+function setAutoRotate(on) {
+  controls.autoRotate = !!on;
+  const btn = document.getElementById('rotate-toggle');
+  if (btn) btn.classList.toggle('on', controls.autoRotate);
+}
+
+function connectSSE() {
+  const es = new EventSource('/events');
+  es.addEventListener('graph-update', ev => {
+    try {
+      graph = JSON.parse(ev.data);
+      rebuildScene();
+      buildLegend();
+      console.log('Graph updated:', graph.meta);
+    } catch (err) {
+      console.error('SSE graph-update error:', err);
+    }
+  });
+  es.onerror = () => setTimeout(connectSSE, 3000);
+}
+
+// ── Utility ─────────────────────────────────────────────────
+
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "_comment": "Engram — Known Systems Registry. Canonical list of recognized source_system values. hue drives base color in the canvas (HSL 0-360). Edit this file to add a system; Synapse reloads on restart. Unknown source_system values fall back to _default.",
+
+  "systems": {
+    "aws":           { "display_name": "AWS",              "hue": 35,  "icon_hint": "cloud",   "category": "cloud" },
+    "entra":         { "display_name": "Entra",  "hue": 210, "icon_hint": "shield",  "category": "identity" },
+    "okta":          { "display_name": "Okta",             "hue": 275, "icon_hint": "shield",  "category": "identity" },
+    "jamf":          { "display_name": "Jamf Pro",         "hue": 145, "icon_hint": "gear",    "category": "endpoint" },
+    "clearpass":     { "display_name": "Aruba ClearPass",  "hue": 190, "icon_hint": "gateway", "category": "network" },
+    "aruba":         { "display_name": "Aruba Central",    "hue": 165, "icon_hint": "gateway", "category": "network" },
+    "internal-wiki": { "display_name": "Internal Wiki",    "hue": 50,  "icon_hint": "document", "category": "knowledge" }
+  },
+
+  "_default": { "display_name": "Unknown", "hue": 285, "icon_hint": "link", "category": "unknown" }
+}

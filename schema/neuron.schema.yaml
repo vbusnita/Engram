@@ -1,0 +1,86 @@
+# Engram Neuron Frontmatter Schema (Infrastructure-focused)
+# All Neuron .md files must conform to this schema
+
+required_fields:
+  neuron_id:
+    type: string
+    format: kebab-case
+    description: Globally unique identifier for this Neuron
+    example: "home-nas-01"
+
+  entity_type:
+    type: enum
+    values:
+      - component     # server, service, VM, container, application
+      - resource      # storage, database, volume, cache
+      - network       # switch, router, vlan, interface, firewall rule
+      - security      # auth, policy, certificate, access control
+      - device        # physical or virtual hardware
+    description: Type of infrastructure entity
+
+  display_name:
+    type: string
+    description: Human-readable label for rendering
+
+  source_uri:
+    type: string
+    format: uri
+    description: Management URL or source of truth
+
+  discovery_method:
+    type: enum
+    values:
+      - api_scan
+      - config_read
+      - manual
+      - inference
+    description: How this was discovered
+
+  discovered_at:
+    type: string
+    format: iso8601
+
+  confidence_score:
+    type: float
+    range: [0.0, 1.0]
+
+optional_fields:
+  source_system:
+    type: string
+    description: e.g. proxmox, unifi, truenas, pfsense, homeassistant
+
+  boundary:
+    type: string
+    format: kebab-case
+    description: Logical group (e.g. home-lab, dmz, core-network)
+
+  edges:
+    type: array
+    items:
+      target: string
+      type:
+        type: enum
+        values:
+          - connected_to
+          - depends_on
+          - routes_to
+          - manages
+          - monitors
+          - authenticates
+          - contains
+      weight: { type: float, default: 0.6 }
+      bidirectional: { type: boolean, default: false }
+      label: string
+
+  tags:
+    type: array
+    items: string
+
+  notes:
+    type: string
+    description: Freeform operation history, discoveries, and context
+
+validation:
+  - neuron_id must be unique
+  - All edge targets must exist
+  - domain is now implicitly infrastructure only
