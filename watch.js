@@ -593,6 +593,70 @@ async function dispatch(req, url) {
       }
     }
 
+    // PUT /mcp/upsert_neuron — idempotent create-or-update, keyed on neuron_id.
+    // Merge semantics: incoming fields overwrite existing ones; omitted fields
+    // preserve existing values; explicit null clears a field. For the markdown
+    // body: `notes` in the payload replaces the body; if omitted, the existing
+    // body is preserved. Returns { ok, action: "created" | "updated" }.
+    if (url.pathname === "/mcp/upsert_neuron" && req.method === "PUT") {
+      try {
+        const incoming = await req.json();
+        if (!incoming.neuron_id || !/^[a-z0-9][a-z0-9-]*$/.test(incoming.neuron_id)) {
+          return Response.json(
+            { error: "validation_failed", details: ["neuron_id required (kebab-case)"] },
+            { status: 400 },
+          );
+        }
+        if (incoming.entity_type && !ENTITY_TYPES.has(incoming.entity_type)) {
+          return Response.json(
+            { error: "validation_failed", details: [`unknown entity_type: ${incoming.entity_type}`] },
+            { status: 400 },
+          );
+        }
+
+        const file = join(NEURONS, `${incoming.neuron_id}.md`);
+        const exists = existsSync(file);
+
+        let merged;
+        let existingBody = "";
+        if (exists) {
+          const content = readFileSync(file, "utf8");
+          const fm = parseFrontmatter(content) || {};
+          existingBody = content.replace(/^---[\s\S]*?---\s*/, "").trimEnd();
+          merged = { ...fm, ...incoming };
+        } else {
+          // Brand-new neuron — apply the same required-field validation as create.
+          const errs = [];
+          if (!incoming.display_name)     errs.push("display_name required");
+          if (!incoming.entity_type)      errs.push("entity_type required");
+          if (!incoming.discovery_method) errs.push("discovery_method required");
+          if (incoming.confidence_score == null) errs.push("confidence_score required");
+          if (errs.length) return Response.json({ error: "validation_failed", details: errs }, { status: 400 });
+          merged = { ...incoming };
+        }
+
+        // Body resolution: explicit notes wins; otherwise keep existing.
+        if (incoming.notes == null && existingBody) {
+          merged.notes = existingBody;
+        }
+
+        const md = renderNeuronMarkdown(merged);
+        writeFileSync(file, md, "utf8");
+        buildGraph();
+        broadcast("graph-update", graphWithHighlights());
+        const action = exists ? "updated" : "created";
+        console.log(`↻  upsert (${action}): ${incoming.neuron_id}`);
+        return Response.json({
+          ok: true,
+          action,
+          neuron_id: incoming.neuron_id,
+          file: relative(DATA_DIR, file),
+        });
+      } catch (e) {
+        return Response.json({ error: "bad_request", message: e.message }, { status: 400 });
+      }
+    }
+
     // POST /mcp/highlight — set or clear a transient highlight overlay
     // body: { neuron_id, state: critical|warning|active|monitoring|clear, reason? }
     if (url.pathname === "/mcp/highlight" && req.method === "POST") {

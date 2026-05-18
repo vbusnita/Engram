@@ -35,6 +35,16 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${ENGRAM_URL}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new EngramError(res.status, await safeText(res));
+  return (await res.json()) as T;
+}
+
 async function safeText(res: Response): Promise<string> {
   try { return await res.text(); } catch { return ""; }
 }
@@ -145,6 +155,12 @@ export const engramClient = {
       "/mcp/create_neuron",
       input,
     ),
+
+  upsertNeuron: (input: Partial<CreateNeuronInput> & { neuron_id: string }) =>
+    put<
+      | { ok: true; action: "created" | "updated"; neuron_id: string; file: string }
+      | { error: string; details?: string[] }
+    >("/mcp/upsert_neuron", input),
 
   highlight: (input: {
     neuron_id: string;

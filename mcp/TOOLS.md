@@ -1,6 +1,6 @@
 # Engram MCP Tools — Inventory
 
-**Last updated**: 2026-05-17
+**Last updated**: 2026-05-18
 **Status legend**: ✅ implemented · ⏳ planned · 🧪 needs design
 
 To resume work: this is the source of truth for which tools exist, which don't, and what's planned. Update it the moment a tool lands. The phase ranking reflects what the **agent loop in `../VISION.md`** actually needs — not a feature wishlist.
@@ -26,9 +26,9 @@ Ordered by criticality for the read → scout → document → repeat cycle desc
 
 Each tool implies a backend endpoint that must be added to `watch.js` first.
 
-| Rank | Tool | Verb | Status | Backend endpoint (planned) | Why it's at this rank |
+| Rank | Tool | Verb | Status | Backend endpoint | Why it's at this rank |
 |---|---|---|---|---|---|
-| 1 | `upsert_neuron` | write | ⏳ | `PUT /mcp/upsert_neuron` | Idempotent create-or-update. Without this, agents must `get_neuron` → branch → either `create` or `update` for every host they touch. Two extra round-trips and brittle. This is the scouting workhorse. |
+| 1 | `upsert_neuron` | write | ✅ | `PUT /mcp/upsert_neuron` | Idempotent create-or-update. The scouting workhorse — agents call it without checking existence first. Merge semantics: incoming fields overwrite, omitted ones preserve, explicit null clears. New neurons require the create_neuron required-set; existing neurons only require `neuron_id`. Returns `{ok, action: "created"\|"updated"}`. Shipped 2026-05-18. |
 | 2 | `update_neuron` | write | ⏳ | `PATCH /mcp/neuron/:id` | Update frontmatter on existing neurons (IP changed, source_system known now, tags refined). Required for follow-up scouts to actually refresh state. |
 | 3 | `search_neurons` | read | ⏳ | `GET /mcp/search` | Filter by entity_type, source_system, boundary, tag, body-text. Agents need this to ask "all UniFi neurons?" without listing the whole graph and filtering client-side. |
 | 4 | `add_edge` | write | ⏳ | `POST /mcp/edge` | Record relationships discovered *after* both endpoints already exist. Without this, edges can only be set at creation — most discovery doesn't work that way. |
@@ -43,7 +43,6 @@ Each tool implies a backend endpoint that must be added to `watch.js` first.
 | Tool | Verb | Status | Notes |
 |---|---|---|---|
 | `suggest_neuron_id` | read | 🧪 | Given a hostname/IP/URL, propose a kebab-case `neuron_id` and `entity_type` |
-| `upsert_neuron` | write | 🧪 | Idempotent create-or-update keyed on `neuron_id` — the scouting workhorse |
 | `discover_subnet` | write | 🧪 | Optional helper that calls nmap and bulk-upserts findings. Open question: does this live in MCP or in the agent? |
 
 The "open question" on `discover_subnet`: pure-MCP tools should be I/O over the graph, not shell-out. A scouting agent already has shell access via its own tools (Bash, etc.); the MCP server's job is to receive the findings, not generate them. Lean toward: keep MCP graph-focused, let the agent drive nmap directly.
