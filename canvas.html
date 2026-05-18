@@ -497,11 +497,36 @@ function onResize() {
   labelRenderer.setSize(w, h);
 }
 
+// Attention colour for any pulsing neuron. Bright saturated red — overrides
+// the entity_type colour while the highlight is active so the eye snaps to it.
+const ATTENTION_COLOR = new THREE.Color(0xff1830);
+
+// Camera-distance-aware sizing. When the camera approaches a cluster, the
+// world-space scale of nodes and edge thickness is reduced so screen-space
+// size stays roughly constant. Above the reference distance, things scale
+// up slightly (more legible when zoomed out). Clamped so nothing gets
+// invisible or comically big.
+const SIZE_REF_DIST = 280;
+const SIZE_MIN = 0.45;
+const SIZE_MAX = 1.50;
+let _cameraSizeFactor = 1.0;
+function updateCameraSizeFactor() {
+  const camDist = camera.position.length() || SIZE_REF_DIST;
+  _cameraSizeFactor = Math.max(SIZE_MIN, Math.min(SIZE_MAX, camDist / SIZE_REF_DIST));
+  // Apply to every node mesh. baseScale was captured at create time.
+  for (const obj of nodeObjects.values()) {
+    if (obj.baseScale != null) {
+      obj.mesh.scale.setScalar(obj.baseScale * _cameraSizeFactor);
+    }
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const now = Date.now();
   _lastFrameMs = now;
   controls.update();
+  updateCameraSizeFactor();
   pulseHighlights();
 
   renderer.render(scene, camera);
@@ -519,30 +544,38 @@ function pulseHighlights() {
       if (obj.haloMat) obj.haloMat.opacity = 0.0;
       continue;
     }
-    // Highlighted neurons pulse body + halo. State comes from MCP /mcp/highlight.
+    // Highlighted neurons pulse body + halo in attention-red so they snap
+    // to the eye even inside a tight same-colour cluster. State comes from
+    // MCP /mcp/highlight. Frequencies in Hz: critical fastest, monitoring
+    // slowest. All states use the same red — the cadence carries severity.
     const state = n.highlight && n.highlight.state;
-    if (state === 'critical') {
-      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 1.0);
-      const shaped = Math.pow(wave, 3);
-      obj.material.emissiveIntensity = 0.05 + 3.8 * shaped;
-      if (obj.haloMat) obj.haloMat.opacity = 0.02 + 0.28 * shaped;
-    } else if (state === 'warning') {
-      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 0.4);
-      obj.material.emissiveIntensity = 0.6 + 1.4 * wave;
-      if (obj.haloMat) obj.haloMat.opacity = 0.06 + 0.16 * wave;
-    } else if (state === 'active') {
-      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 0.5);
-      obj.material.emissiveIntensity = 0.5 + 1.0 * wave;
-      if (obj.haloMat) obj.haloMat.opacity = 0.06 + 0.14 * wave;
-    } else if (state === 'monitoring') {
-      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 0.6);
-      obj.material.emissiveIntensity = 0.8 + 1.2 * wave;
-      if (obj.haloMat) obj.haloMat.opacity = 0.04 + 0.06 * wave;
+    if (state) {
+      let freqHz, peakI, peakHalo;
+      if      (state === 'critical')   { freqHz = 2.4; peakI = 5.0; peakHalo = 0.55; }
+      else if (state === 'warning')    { freqHz = 1.8; peakI = 4.2; peakHalo = 0.48; }
+      else if (state === 'active')     { freqHz = 1.5; peakI = 3.6; peakHalo = 0.42; }
+      else if (state === 'monitoring') { freqHz = 1.3; peakI = 3.4; peakHalo = 0.38; }
+      else                              { freqHz = 1.5; peakI = 3.6; peakHalo = 0.42; }
+
+      const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 * freqHz);
+      const shaped = state === 'critical' ? Math.pow(wave, 2.2) : wave;
+
+      // Force emissive colour to red regardless of entity_type base.
+      obj.material.emissive.copy(ATTENTION_COLOR);
+      obj.material.emissiveIntensity = 0.4 + peakI * shaped;
+      if (obj.haloMat) {
+        obj.haloMat.color.copy(ATTENTION_COLOR);
+        obj.haloMat.opacity = 0.08 + peakHalo * shaped;
+      }
     } else {
-      // Default: restore base glow. Without this branch, exiting a previous
-      // focus-dim or pulse leaves emissive/halo stuck at the last value written.
+      // Default: restore base entity_type emissive + halo. Without this branch,
+      // exiting a previous focus-dim or pulse leaves values stuck.
+      if (obj.baseEmissive) obj.material.emissive.copy(obj.baseEmissive);
       obj.material.emissiveIntensity = n.phantom ? 0.0 : 1.7;
-      if (obj.haloMat) obj.haloMat.opacity = 0.16;
+      if (obj.haloMat) {
+        if (obj.baseHaloColor) obj.haloMat.color.copy(obj.baseHaloColor);
+        obj.haloMat.opacity = 0.16;
+      }
     }
   }
 }
@@ -834,7 +867,12 @@ function createNodeObject(n) {
   label.position.set(0, SPHERE_RADIUS * s + 6, 0);
   mesh.add(label);
 
-  nodeObjects.set(n.id, { mesh, material, haloMesh, haloMat, label, labelDiv });
+  nodeObjects.set(n.id, {
+    mesh, material, haloMesh, haloMat, label, labelDiv,
+    baseScale: s,                              // degree-derived sphere scale
+    baseEmissive: col.clone(),                 // entity_type colour to restore after pulse
+    baseHaloColor: col.clone(),                // halo also restores to entity_type colour
+  });
 }
 
 function createEdgeObject(link) {
@@ -1129,6 +1167,8 @@ function onTick() {
     obj.mesh.position.set(n.x, n.y, n.z || 0);
   }
   // Straight data edges — bright cylinders representing real graph topology.
+  // Radius is scaled by _cameraSizeFactor so edges don't bulk up when you
+  // zoom into the cluster.
   for (const eo of edgeObjects) {
     const s = eo.link.source, t = eo.link.target;
     if (!s || !t || typeof s === 'string' || typeof t === 'string') continue;
@@ -1138,7 +1178,7 @@ function onTick() {
     eo.mesh.position.set((s.x + t.x) / 2, (s.y + t.y) / 2, (sz + tz) / 2);
     TMP_DIR.set(dx / len, dy / len, dz / len);
     eo.mesh.quaternion.setFromUnitVectors(TMP_UP, TMP_DIR);
-    const radius = 0.30 + 0.45 * (eo.link.weight || 0.5);
+    const radius = (0.30 + 0.45 * (eo.link.weight || 0.5)) * _cameraSizeFactor;
     eo.mesh.scale.set(radius, len, radius);
   }
   // Structural mesh — faint per-cluster lattice. Updated every few ticks.
