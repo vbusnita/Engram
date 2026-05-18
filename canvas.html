@@ -982,7 +982,10 @@ function rebuildScene() {
       .strength(d => 0.5 * (d.weight || 0.5)))
     .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH).distanceMax(1000))
     .force('center', d3.forceCenter(0, 0, 0).strength(0.04))
-    .force('cluster', clusterForce(0.45))
+    // Two-layer clustering: primary signal is entity_type (matches colour),
+    // secondary is boundary so home-lab vs dmz still separate when present.
+    .force('cluster-type', clusterForce(0.55, n => n.entity_type))
+    .force('cluster-boundary', clusterForce(0.15, n => n.boundary === '_unbound' ? null : n.boundary))
     .force('collide', d3.forceCollide().radius(d => SPHERE_RADIUS * degreeScale(d.degree || 0) + 6).strength(0.8))
     .alphaDecay(0.02)
     .on('tick', onTick);
@@ -991,28 +994,34 @@ function rebuildScene() {
   applyDomainFilter();
 }
 
-function clusterForce(strength) {
+// Generic centroid-pull cluster force keyed on whatever attribute `keyFn`
+// returns. Used to group nodes that share an attribute into the same region
+// of 3D space without locking their absolute position.
+function clusterForce(strength, keyFn) {
   let nodes;
   function force(alpha) {
     const centroids = new Map();
     const counts = new Map();
     for (const n of nodes) {
-      if (!centroids.has(n.boundary)) {
-        centroids.set(n.boundary, { x: 0, y: 0, z: 0 });
-        counts.set(n.boundary, 0);
+      const key = keyFn(n);
+      if (key == null) continue;
+      if (!centroids.has(key)) {
+        centroids.set(key, { x: 0, y: 0, z: 0 });
+        counts.set(key, 0);
       }
-      const c = centroids.get(n.boundary);
+      const c = centroids.get(key);
       c.x += n.x; c.y += n.y; c.z += (n.z || 0);
-      counts.set(n.boundary, counts.get(n.boundary) + 1);
+      counts.set(key, counts.get(key) + 1);
     }
-    for (const [b, c] of centroids) {
-      const k = counts.get(b);
-      c.x /= k; c.y /= k; c.z /= k;
+    for (const [k, c] of centroids) {
+      const n = counts.get(k);
+      c.x /= n; c.y /= n; c.z /= n;
     }
     const k = strength * alpha;
     for (const n of nodes) {
-      if (n.boundary === '_unbound') continue;
-      const c = centroids.get(n.boundary);
+      const key = keyFn(n);
+      if (key == null) continue;
+      const c = centroids.get(key);
       if (c) {
         n.vx += (c.x - n.x) * k;
         n.vy += (c.y - n.y) * k;
