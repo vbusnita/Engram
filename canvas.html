@@ -335,7 +335,7 @@ const ENTITY_ICON = {
 const BOUND_PALETTE = [0x55ccff, 0x22ee66, 0xaa66ff, 0xffaa22, 0xee1030, 0x00bbcc];
 const BOUNDARY_COLOR = {};
 
-const SPHERE_RADIUS = 5.78;
+const SPHERE_RADIUS = 3.0;
 // Sphere scale = BASE + STEP * sqrt(degree). Degree 0 → 0.75, 1 → 1.05, 4 → 1.35, 9 → 1.65.
 const DEGREE_SCALE_BASE = 0.75;
 const DEGREE_SCALE_STEP = 0.30;
@@ -352,9 +352,12 @@ const ATTENTION_COLOR = new THREE.Color(0xff1830);
 // size stays roughly constant. Above the reference distance, things scale
 // up slightly (more legible when zoomed out). Clamped so nothing gets
 // invisible or comically big.
-const SIZE_REF_DIST = 280;
+// REF_DIST matches the typical "framed cluster" camera distance so the
+// default startup view sits at factor 1.0. MAX is 1.0 — zooming out doesn't
+// grow spheres beyond that (you want to see the shape, not the dots).
+const SIZE_REF_DIST = 700;
 const SIZE_MIN = 0.45;
-const SIZE_MAX = 1.50;
+const SIZE_MAX = 1.0;
 let _cameraSizeFactor = 1.0;
 
 // ── State ─────────────────────────────────────────────────────
