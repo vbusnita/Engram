@@ -340,8 +340,8 @@ const SPHERE_RADIUS = 5.78;
 const DEGREE_SCALE_BASE = 0.75;
 const DEGREE_SCALE_STEP = 0.30;
 
-const LINK_DISTANCE = 160;
-const CHARGE_STRENGTH = -600;
+const LINK_DISTANCE = 70;
+const CHARGE_STRENGTH = -260;
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -1064,7 +1064,7 @@ function rebuildScene() {
       .distance(d => LINK_DISTANCE / (d.weight || 0.5))
       .strength(d => 0.5 * (d.weight || 0.5)))
     .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH).distanceMax(1000))
-    .force('center', d3.forceCenter(0, 0, 0).strength(0.04))
+    .force('center', d3.forceCenter(0, 0, 0).strength(0.10))
     // Two-layer clustering: primary signal is entity_type (matches colour),
     // secondary is boundary. Loose enough that the structural-mesh lattice
     // shows distinct edges instead of all nodes collapsing to centroid.
