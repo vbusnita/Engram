@@ -343,6 +343,20 @@ const DEGREE_SCALE_STEP = 0.30;
 const LINK_DISTANCE = 70;
 const CHARGE_STRENGTH = -260;
 
+// Attention colour for any pulsing neuron. Bright saturated red — overrides
+// the entity_type colour while the highlight is active so the eye snaps to it.
+const ATTENTION_COLOR = new THREE.Color(0xff1830);
+
+// Camera-distance-aware sizing. When the camera approaches a cluster, the
+// world-space scale of nodes and edge thickness is reduced so screen-space
+// size stays roughly constant. Above the reference distance, things scale
+// up slightly (more legible when zoomed out). Clamped so nothing gets
+// invisible or comically big.
+const SIZE_REF_DIST = 280;
+const SIZE_MIN = 0.45;
+const SIZE_MAX = 1.50;
+let _cameraSizeFactor = 1.0;
+
 // ── State ─────────────────────────────────────────────────────
 
 let graph = { nodes: [], edges: [], boundaries: [], meta: {} };
@@ -497,19 +511,6 @@ function onResize() {
   labelRenderer.setSize(w, h);
 }
 
-// Attention colour for any pulsing neuron. Bright saturated red — overrides
-// the entity_type colour while the highlight is active so the eye snaps to it.
-const ATTENTION_COLOR = new THREE.Color(0xff1830);
-
-// Camera-distance-aware sizing. When the camera approaches a cluster, the
-// world-space scale of nodes and edge thickness is reduced so screen-space
-// size stays roughly constant. Above the reference distance, things scale
-// up slightly (more legible when zoomed out). Clamped so nothing gets
-// invisible or comically big.
-const SIZE_REF_DIST = 280;
-const SIZE_MIN = 0.45;
-const SIZE_MAX = 1.50;
-let _cameraSizeFactor = 1.0;
 function updateCameraSizeFactor() {
   const camDist = camera.position.length() || SIZE_REF_DIST;
   _cameraSizeFactor = Math.max(SIZE_MIN, Math.min(SIZE_MAX, camDist / SIZE_REF_DIST));
