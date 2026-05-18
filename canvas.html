@@ -351,7 +351,8 @@ let simNodes = [];
 let simLinks = [];
 
 let scene, camera, renderer, labelRenderer, controls, raycaster, pointer;
-let nodeGroup, edgeGroup, hullGroup, brainShell;
+let nodeGroup, edgeGroup, hullGroup, structuralGroup, brainShell;
+let structuralLines = [];   // { mesh, material, geometry } per cluster
 const nodeObjects = new Map();   // id → { mesh, material, label, labelDiv }
 let edgeObjects = [];            // { line, material, link }
 let hullObjects = [];
@@ -443,9 +444,11 @@ function initThree() {
   nodeGroup = new THREE.Group();
   edgeGroup = new THREE.Group();
   hullGroup = new THREE.Group();
+  structuralGroup = new THREE.Group();
   scene.add(nodeGroup);
   scene.add(edgeGroup);
   scene.add(hullGroup);
+  scene.add(structuralGroup);
   controls.autoRotate = false;
   controls.autoRotateSpeed = 0.6;
   controls.zoomSpeed = 0.9;
@@ -538,8 +541,8 @@ function pulseHighlights() {
     } else {
       // Default: restore base glow. Without this branch, exiting a previous
       // focus-dim or pulse leaves emissive/halo stuck at the last value written.
-      obj.material.emissiveIntensity = n.phantom ? 0.0 : 2.0;
-      if (obj.haloMat) obj.haloMat.opacity = 0.28;
+      obj.material.emissiveIntensity = n.phantom ? 0.0 : 1.7;
+      if (obj.haloMat) obj.haloMat.opacity = 0.16;
     }
   }
 }
@@ -686,10 +689,10 @@ function clearScene() {
 
   for (const { mesh, material } of edgeObjects) {
     edgeGroup.remove(mesh);
-    if (mesh.geometry) mesh.geometry.dispose();
-    material.dispose();
+    material.dispose();   // geometry is the shared UNIT_CYLINDER — don't dispose
   }
   edgeObjects = [];
+  clearStructuralMesh();
 
   clearHulls();
 }
@@ -701,6 +704,85 @@ function clearHulls() {
     if (h.material) h.material.dispose();
   }
   hullObjects = [];
+}
+
+function clearStructuralMesh() {
+  if (!structuralGroup) return;
+  for (const { mesh, geometry, material } of structuralLines) {
+    structuralGroup.remove(mesh);
+    geometry.dispose();
+    material.dispose();
+  }
+  structuralLines = [];
+}
+
+// Build a per-cluster k-nearest-neighbor lattice connecting same-entity_type
+// neurons with thin colored lines. Rebuilt every few sim ticks; this is the
+// polygon-mesh look — straight chords between nearby cluster members so
+// each cluster reads as a 3D triangulated web rather than isolated points.
+function rebuildStructuralMesh() {
+  clearStructuralMesh();
+  if (!simNodes || simNodes.length === 0) return;
+
+  // Group nodes by entity_type (the same key as the primary cluster force).
+  const byType = new Map();
+  for (const n of simNodes) {
+    if (n.phantom) continue;
+    if (!byType.has(n.entity_type)) byType.set(n.entity_type, []);
+    byType.get(n.entity_type).push(n);
+  }
+
+  const K = 3;  // each node connects to its K nearest cluster-mates
+  for (const [type, nodes] of byType) {
+    if (nodes.length < 2) continue;  // need at least 2 to draw a line
+
+    // Compute pairwise distances, then for each node pick K nearest.
+    // Store edges as undirected (smaller id first) to dedupe.
+    const edges = new Set();
+    for (const a of nodes) {
+      const dists = nodes
+        .filter(b => b.id !== a.id)
+        .map(b => ({
+          b,
+          d: Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0)),
+        }))
+        .sort((p, q) => p.d - q.d)
+        .slice(0, K);
+      for (const { b } of dists) {
+        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+        edges.add(key);
+      }
+    }
+    if (edges.size === 0) continue;
+
+    // Build a single LineSegments per cluster — fewer draw calls.
+    const positions = new Float32Array(edges.size * 2 * 3);
+    let i = 0;
+    const nodeById = new Map(nodes.map(n => [n.id, n]));
+    for (const key of edges) {
+      const [aId, bId] = key.split('|');
+      const a = nodeById.get(aId), b = nodeById.get(bId);
+      if (!a || !b) continue;
+      positions[i++] = a.x; positions[i++] = a.y; positions[i++] = a.z || 0;
+      positions[i++] = b.x; positions[i++] = b.y; positions[i++] = b.z || 0;
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    // Cluster colour: use the same entity_type palette as the spheres.
+    const palette = _getEntityPalette(type);
+    const lineCol = palette.base.clone().multiplyScalar(0.75);
+    const material = new THREE.LineBasicMaterial({
+      color: lineCol,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+    });
+    const mesh = new THREE.LineSegments(geom, material);
+    mesh.raycast = () => {};  // not pickable
+    structuralGroup.add(mesh);
+    structuralLines.push({ mesh, geometry: geom, material });
+  }
 }
 
 function createNodeObject(n) {
@@ -731,13 +813,13 @@ function createNodeObject(n) {
     haloMat = new THREE.MeshBasicMaterial({
       color: col,
       transparent: true,
-      opacity: 0.28,
+      opacity: 0.16,
       depthWrite: false,
       side: THREE.BackSide,
       blending: THREE.AdditiveBlending,
     });
     haloMesh = new THREE.Mesh(sphereGeom(), haloMat);
-    haloMesh.scale.setScalar(3.6);
+    haloMesh.scale.setScalar(2.6);
     haloMesh.raycast = () => {};
     mesh.add(haloMesh);
   }
@@ -750,15 +832,6 @@ function createNodeObject(n) {
   mesh.add(label);
 
   nodeObjects.set(n.id, { mesh, material, haloMesh, haloMat, label, labelDiv });
-}
-
-// Deterministic per-edge "bend" angle so two edges between the same pair
-// don't overlap and so each edge has its own personality.
-function edgeBendAngle(srcId, tgtId) {
-  const s = (srcId || '') + '|' + (tgtId || '');
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return ((h >>> 0) % 360) * (Math.PI / 180);
 }
 
 function createEdgeObject(link) {
@@ -780,21 +853,18 @@ function createEdgeObject(link) {
   const material = new THREE.MeshStandardMaterial({
     color: colHex,
     emissive: phantomEdge ? 0x000000 : colHex,
-    emissiveIntensity: phantomEdge ? 0.0 : 1.0,
+    emissiveIntensity: phantomEdge ? 0.0 : 0.8,
     roughness: phantomEdge ? 0.98 : 0.45,
     metalness: 0.0,
-    flatShading: false,
+    flatShading: true,
     transparent: true,
-    opacity: phantomEdge ? 0.28 : 0.65,
+    opacity: phantomEdge ? 0.28 : 0.60,
     depthWrite: !phantomEdge,
   });
-  // Start with a tiny placeholder geometry; onTick replaces it each frame.
-  const geom = new THREE.BufferGeometry();
-  const mesh = new THREE.Mesh(geom, material);
+  const mesh = new THREE.Mesh(unitCylinder(), material);
   mesh.matrixAutoUpdate = true;
   edgeGroup.add(mesh);
-  const bend = edgeBendAngle(srcId, tgtId);
-  edgeObjects.push({ mesh, material, link, phantomEdge, bend });
+  edgeObjects.push({ mesh, material, link, phantomEdge });
 }
 
 function rebuildHulls() {
@@ -996,9 +1066,10 @@ function rebuildScene() {
     .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH).distanceMax(1000))
     .force('center', d3.forceCenter(0, 0, 0).strength(0.04))
     // Two-layer clustering: primary signal is entity_type (matches colour),
-    // secondary is boundary so home-lab vs dmz still separate when present.
-    .force('cluster-type', clusterForce(0.55, n => n.entity_type))
-    .force('cluster-boundary', clusterForce(0.15, n => n.boundary === '_unbound' ? null : n.boundary))
+    // secondary is boundary. Loose enough that the structural-mesh lattice
+    // shows distinct edges instead of all nodes collapsing to centroid.
+    .force('cluster-type', clusterForce(0.30, n => n.entity_type))
+    .force('cluster-boundary', clusterForce(0.10, n => n.boundary === '_unbound' ? null : n.boundary))
     .force('collide', d3.forceCollide().radius(d => SPHERE_RADIUS * degreeScale(d.degree || 0) + 6).strength(0.8))
     .alphaDecay(0.02)
     .on('tick', onTick);
@@ -1054,47 +1125,21 @@ function onTick() {
     if (!obj) continue;
     obj.mesh.position.set(n.x, n.y, n.z || 0);
   }
-  // Curved dendritic edges. Each tick we rebuild a per-edge TubeGeometry
-  // from a 3-point Catmull-Rom curve (src → bent midpoint → tgt). The
-  // midpoint is offset perpendicular to the edge axis by ~18% of the edge
-  // length, rotated around the axis by a deterministic per-edge angle so
-  // edges in the same general direction don't all bow the same way.
-  // For 8–100 edges this rebuild is cheap; if we grow past ~500, switch
-  // to a static-geometry-with-position-update strategy.
-  const _curveVecA = new THREE.Vector3();
-  const _curveVecB = new THREE.Vector3();
-  const _curveUp   = new THREE.Vector3(0, 1, 0);
-  const _curveAlt  = new THREE.Vector3(1, 0, 0);
+  // Straight data edges — bright cylinders representing real graph topology.
   for (const eo of edgeObjects) {
     const s = eo.link.source, t = eo.link.target;
     if (!s || !t || typeof s === 'string' || typeof t === 'string') continue;
     const sz = s.z || 0, tz = t.z || 0;
     const dx = t.x - s.x, dy = t.y - s.y, dz = tz - sz;
     const len = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-
-    // Perpendicular to edge axis; rotate around axis by per-edge bend angle.
-    _curveVecA.set(dx / len, dy / len, dz / len);
-    let perp = _curveVecB.copy(_curveUp).cross(_curveVecA);
-    if (perp.lengthSq() < 0.01) perp = _curveVecB.copy(_curveAlt).cross(_curveVecA);
-    perp.normalize().applyAxisAngle(_curveVecA, eo.bend);
-
-    const offset = len * 0.18;
-    const mx = (s.x + t.x) / 2 + perp.x * offset;
-    const my = (s.y + t.y) / 2 + perp.y * offset;
-    const mz = (sz + tz) / 2  + perp.z * offset;
-
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(s.x, s.y, sz),
-      new THREE.Vector3(mx, my, mz),
-      new THREE.Vector3(t.x, t.y, tz),
-    ], false, 'catmullrom', 0.5);
-
-    const radius = 0.45 + 0.55 * (eo.link.weight || 0.5);
-    const segments = 16;
-    const newGeom = new THREE.TubeGeometry(curve, segments, radius, 6, false);
-    if (eo.mesh.geometry) eo.mesh.geometry.dispose();
-    eo.mesh.geometry = newGeom;
+    eo.mesh.position.set((s.x + t.x) / 2, (s.y + t.y) / 2, (sz + tz) / 2);
+    TMP_DIR.set(dx / len, dy / len, dz / len);
+    eo.mesh.quaternion.setFromUnitVectors(TMP_UP, TMP_DIR);
+    const radius = 0.30 + 0.45 * (eo.link.weight || 0.5);
+    eo.mesh.scale.set(radius, len, radius);
   }
+  // Structural mesh — faint per-cluster lattice. Updated every few ticks.
+  if (tickCount % 6 === 0) rebuildStructuralMesh();
   if (tickCount % 12 === 0) rebuildHulls();
   if (tickCount % 20 === 0) fitBrainShell();
 }
