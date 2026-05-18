@@ -309,7 +309,19 @@ const HIGHLIGHT_COLOR = {
   monitoring: 0x00bbcc,  // vivid cyan
 };
 
-const INFRASTRUCTURE_COLOR = 0x89b4fa;  // blue body color for live neurons
+const INFRASTRUCTURE_COLOR = 0x89b4fa;  // legacy fallback when entity_type is unknown
+
+// Primary categorical palette. Each neuron's body colour is driven by
+// entity_type (the canonical infrastructure category). Hue values are picked
+// for high visual separation in 3D — adjacent hues are >=60° apart.
+const ENTITY_HUE = {
+  network:   210,  // blue       — gateways, switches, APs
+  device:    275,  // purple     — IoT, smart-home, edge devices
+  component: 145,  // green      — workstations, servers, services
+  resource:  40,   // amber      — storage, databases, files
+  security:  0,    // red        — firewalls, IDS, secrets stores
+};
+const _ENTITY_DEFAULT_HUE = 230; // muted slate-blue for unknown entity_type
 const EDGE_DEFAULT = 0x303050;          // fallback for unresolvable endpoints
 
 const ENTITY_ICON = {
@@ -624,11 +636,11 @@ function degreeScale(degree) {
 }
 
 const _paletteCache = new Map();
-function _getPalette(src) {
-  const key = src || '_default';
+function _getEntityPalette(entity_type) {
+  const key = entity_type || '_default';
   if (_paletteCache.has(key)) return _paletteCache.get(key);
-  const sys = SOURCE_PALETTES[key] || DEFAULT_SOURCE_PALETTE;
-  const hue = (sys.hue ?? 285) / 360;
+  const hueDeg = ENTITY_HUE[entity_type] ?? _ENTITY_DEFAULT_HUE;
+  const hue = hueDeg / 360;
   // Base: vibrant mid-light. Hub: deep saturated. Both in same hue family.
   const base = new THREE.Color().setHSL(hue, 0.78, 0.58);
   const hub  = new THREE.Color().setHSL(hue, 0.88, 0.28);
@@ -638,8 +650,8 @@ function _getPalette(src) {
 }
 const _NEURON_PHANTOM_COL = new THREE.Color(COLOR_PHANTOM);
 
-function neuronColor(degree, source_system) {
-  const p = _getPalette(source_system);
+function neuronColor(degree, entity_type) {
+  const p = _getEntityPalette(entity_type);
   const t = Math.min(1, Math.sqrt(Math.max(0, degree)) / Math.sqrt(NEURON_DEGREE_SATURATION));
   const c = new THREE.Color().copy(p.base);
   c.lerpHSL(p.hub, t);
@@ -648,11 +660,11 @@ function neuronColor(degree, source_system) {
 
 function colorForNode(n) {
   if (n.phantom) return _NEURON_PHANTOM_COL.clone();
-  return new THREE.Color(INFRASTRUCTURE_COLOR);
+  return neuronColor(n.degree || 0, n.entity_type);
 }
 
-function neuronColorCSS(degree, source_system) {
-  return '#' + neuronColor(degree, source_system).getHexString();
+function neuronColorCSS(degree, entity_type) {
+  return '#' + neuronColor(degree, entity_type).getHexString();
 }
 
 function baseOpacityFor(n) {
@@ -970,7 +982,7 @@ function rebuildScene() {
       .strength(d => 0.5 * (d.weight || 0.5)))
     .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH).distanceMax(1000))
     .force('center', d3.forceCenter(0, 0, 0).strength(0.04))
-    .force('cluster', clusterForce(0.12))
+    .force('cluster', clusterForce(0.45))
     .force('collide', d3.forceCollide().radius(d => SPHERE_RADIUS * degreeScale(d.degree || 0) + 6).strength(0.8))
     .alphaDecay(0.02)
     .on('tick', onTick);
@@ -1344,7 +1356,7 @@ async function openDetail(id) {
   }
   setFocus(id);
 
-  const cssCol = node.phantom ? '#585b70' : neuronColorCSS(node.degree || 0, node.source_system);
+  const cssCol = node.phantom ? '#585b70' : neuronColorCSS(node.degree || 0, node.entity_type);
   document.getElementById('detail-icon').textContent = ENTITY_ICON[node.entity_type] || '';
   document.getElementById('detail-icon').style.color = cssCol;
   document.getElementById('detail-name').textContent = node.display_name;
