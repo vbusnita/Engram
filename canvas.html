@@ -363,8 +363,8 @@ const FOCUS_HOPS = 2;
 let hoveredId = null;
 // source_system filter — populated on first buildLegend from whatever the graph contains.
 // Nodes with no source_system bypass this filter (they're phantoms or unclassified).
-const activeSources = new Set();
-let _sourcesInitialized = false;
+const activeEntityTypes = new Set();
+let _typesInitialized = false;
 let _lastFrameMs = 0;
 let downPoint = null;
 let nodeDragState = null;   // { node, plane, offset, pointerId }
@@ -724,10 +724,13 @@ function rebuildStructuralMesh() {
   clearStructuralMesh();
   if (!simNodes || simNodes.length === 0) return;
 
-  // Group nodes by entity_type (the same key as the primary cluster force).
+  // Group visible nodes by entity_type (the same key as the cluster force).
+  // Filtered-out clusters get no lattice — toggling a chip off hides them
+  // and their structural web together.
   const byType = new Map();
   for (const n of simNodes) {
     if (n.phantom) continue;
+    if (!nodeLayerVisible(n)) continue;
     if (!byType.has(n.entity_type)) byType.set(n.entity_type, []);
     byType.get(n.entity_type).push(n);
   }
@@ -1052,7 +1055,7 @@ function rebuildScene() {
     const t = nodeById.get(l.target); if (t) t.degree++;
   }
 
-  syncActiveSources();   // must run before applyDomainFilter below
+  syncActiveTypes();   // must run before applyDomainFilter below
 
   clearScene();
   for (const n of simNodes) createNodeObject(n);
@@ -1534,7 +1537,8 @@ function closeDetail() {
 
 function nodeLayerVisible(n) {
   if (n.phantom) return true;
-  if (n.source_system && !activeSources.has(n.source_system)) return false;
+  // Filter chips at the bottom toggle visibility per entity_type cluster.
+  if (n.entity_type && !activeEntityTypes.has(n.entity_type)) return false;
   return true;
 }
 
@@ -1568,19 +1572,18 @@ function applyDomainFilter() {
     const t = simNodes.find(x => x.id === tid);
     eo.mesh.visible = !!(s && t && nodeLayerVisible(s) && nodeLayerVisible(t));
   }
-  // Hulls — rebuild shape against the current visible set, not just visibility.
+  // Hulls + structural mesh — rebuild against the current visible set.
   rebuildHulls();
+  rebuildStructuralMesh();
   buildLegend();
 }
 
 function applyHullFilter() {
-  for (const h of hullObjects) {
-    // Hide a hull when none of its member sources are active (hull of all-hidden nodes = ghost volume).
-    const sources = h.userData.sources;
-    const sourceOk = !sources || sources.size === 0 ||
-                     [...sources].some(s => activeSources.has(s));
-    h.visible = sourceOk;
-  }
+  // Hulls are built per-boundary; visibility is now driven by entity_type
+  // (we don't track per-hull entity types yet). For now, hulls are always
+  // visible — rebuildHulls re-runs on filter change so excluded neurons
+  // don't contribute to the hull anyway.
+  for (const h of hullObjects) h.visible = true;
 }
 
 function updateStats() {
@@ -1591,39 +1594,50 @@ function updateStats() {
     `<span><b>${(graph.boundaries || []).length}</b> boundaries</span>`;
 }
 
-// Populate activeSources from the current simNodes. Safe to call multiple times.
-// Must run BEFORE applyDomainFilter on first load, otherwise an empty activeSources
-// hides every tagged neuron.
-function syncActiveSources() {
-  const presentSources = new Set(simNodes.map(n => n.source_system).filter(Boolean));
-  if (!_sourcesInitialized) {
-    for (const s of presentSources) activeSources.add(s);
-    _sourcesInitialized = true;
+// Populate activeEntityTypes from the current simNodes. Safe to call multiple
+// times. Must run BEFORE applyDomainFilter on first load, otherwise an empty
+// activeEntityTypes hides every neuron.
+function syncActiveTypes() {
+  const present = new Set(simNodes.map(n => n.entity_type).filter(Boolean));
+  if (!_typesInitialized) {
+    for (const t of present) activeEntityTypes.add(t);
+    _typesInitialized = true;
   } else {
-    for (const s of presentSources) {
-      if (!activeSources.has(s) && !_knownToggledOff.has(s)) activeSources.add(s);
+    for (const t of present) {
+      if (!activeEntityTypes.has(t) && !_knownToggledOff.has(t)) activeEntityTypes.add(t);
     }
   }
 }
 
+// Cluster filter chips. One chip per entity_type present in the graph.
+// Each chip's swatch matches the cluster's hue.
 function buildLegend() {
   const bar = document.getElementById('toolbar');
-  const presentSources = new Set(simNodes.map(n => n.source_system).filter(Boolean));
-  syncActiveSources();
+  const present = new Set(simNodes.map(n => n.entity_type).filter(Boolean));
+  syncActiveTypes();
 
-  if (presentSources.size === 0) {
+  if (present.size === 0) {
     bar.innerHTML = '';
     return;
   }
 
-  let html = `<div class="tb-section"><span class="tb-label">Systems</span>`;
-  const sorted = [...presentSources].sort();
-  sorted.forEach((src) => {
-    const on = activeSources.has(src) ? ' on' : '';
-    const display = (SOURCE_PALETTES[src] && SOURCE_PALETTES[src].display_name) || src;
-    const hue = SOURCE_PALETTES[src]?.hue ?? SOURCE_PALETTES._default?.hue ?? 285;
-    const hex = `hsl(${hue}, 65%, 65%)`;
-    html += `<div class="tb-btn${on}" data-kind="source" data-key="${src}">` +
+  // Canonical display order so the legend is stable across graph updates.
+  const ORDER = ['network', 'device', 'component', 'resource', 'security'];
+  const sorted = [...present].sort((a, b) => {
+    const ai = ORDER.indexOf(a), bi = ORDER.indexOf(b);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  let html = `<div class="tb-section"><span class="tb-label">Clusters</span>`;
+  sorted.forEach((type) => {
+    const on = activeEntityTypes.has(type) ? ' on' : '';
+    const hue = ENTITY_HUE[type] ?? _ENTITY_DEFAULT_HUE;
+    const hex = `hsl(${hue}, 78%, 58%)`;
+    const display = type[0].toUpperCase() + type.slice(1);
+    html += `<div class="tb-btn${on}" data-kind="type" data-key="${type}">` +
       `<div class="tb-swatch" style="background:${hex}"></div>` +
       `<span>${display}</span>` +
       `</div>`;
@@ -1643,10 +1657,10 @@ const _knownToggledOff = new Set();
 
 function toggleFilter(kind, key, btn) {
   const isOn = btn ? btn.classList.contains('on') : null;
-  if (kind === 'source') {
-    if (isOn && activeSources.size === 1) return;
-    if (isOn) { activeSources.delete(key); _knownToggledOff.add(key); }
-    else       { activeSources.add(key);    _knownToggledOff.delete(key); }
+  if (kind === 'type') {
+    if (isOn && activeEntityTypes.size === 1) return;  // keep at least one on
+    if (isOn) { activeEntityTypes.delete(key); _knownToggledOff.add(key); }
+    else       { activeEntityTypes.add(key);    _knownToggledOff.delete(key); }
   }
   if (btn) btn.classList.toggle('on');
   applyDomainFilter();
