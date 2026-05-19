@@ -9,6 +9,7 @@ import { listBoundariesTool, listBoundariesHandler } from "./list-boundaries.js"
 import { listHighlightsTool, listHighlightsHandler } from "./list-highlights.js";
 import { createNeuronTool,   createNeuronHandler }   from "./create-neuron.js";
 import { upsertNeuronTool,   upsertNeuronHandler }   from "./upsert-neuron.js";
+import { addEdgeTool,        addEdgeHandler }        from "./add-edge.js";
 import { highlightTool,      highlightHandler }      from "./highlight.js";
 
 export const tools: ToolEntry[] = [
@@ -18,5 +19,6 @@ export const tools: ToolEntry[] = [
   { def: listHighlightsTool, handler: listHighlightsHandler },
   { def: createNeuronTool,   handler: createNeuronHandler },
   { def: upsertNeuronTool,   handler: upsertNeuronHandler },
+  { def: addEdgeTool,        handler: addEdgeHandler },
   { def: highlightTool,      handler: highlightHandler },
 ];

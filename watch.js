@@ -657,6 +657,55 @@ async function dispatch(req, url) {
       }
     }
 
+    // PUT /mcp/edge — add or update a directed edge from source to target.
+    // body: { source, target, type, weight?, bidirectional?, label? }
+    // Idempotent: keyed on (source, target, type). Re-adding the same triple
+    // replaces weight/bidirectional/label. Source neuron must exist; target
+    // can be missing (becomes a phantom node until populated).
+    if (url.pathname === "/mcp/edge" && req.method === "PUT") {
+      try {
+        const { source, target, type, weight, bidirectional, label } = await req.json();
+        const errs = [];
+        if (!source) errs.push("source required");
+        if (!target) errs.push("target required");
+        if (!type)   errs.push("type required");
+        if (type && !EDGE_TYPES.has(type)) errs.push(`unknown edge type: ${type}`);
+        if (source && target && source === target) errs.push("source and target must differ");
+        if (errs.length) return Response.json({ error: "validation_failed", details: errs }, { status: 400 });
+
+        const sourceFile = join(NEURONS, `${source}.md`);
+        if (!existsSync(sourceFile)) {
+          return Response.json({ error: "source_not_found", source }, { status: 404 });
+        }
+
+        // Read source neuron, parse frontmatter + body, mutate edges array, write back.
+        const content = readFileSync(sourceFile, "utf8");
+        const fm = parseFrontmatter(content) || {};
+        const body = content.replace(/^---[\s\S]*?---\s*/, "").trimEnd();
+        if (!Array.isArray(fm.edges)) fm.edges = [];
+
+        const newEdge = { target, type };
+        if (weight != null)   newEdge.weight = weight;
+        if (bidirectional)    newEdge.bidirectional = true;
+        if (label)            newEdge.label = label;
+
+        const idx = fm.edges.findIndex(e => e.target === target && e.type === type);
+        let action;
+        if (idx >= 0) { fm.edges[idx] = newEdge; action = "updated"; }
+        else          { fm.edges.push(newEdge);  action = "created"; }
+
+        if (body) fm.notes = body;
+
+        writeFileSync(sourceFile, renderNeuronMarkdown(fm), "utf8");
+        buildGraph();
+        broadcast("graph-update", graphWithHighlights());
+        console.log(`→  edge ${action}: ${source} --${type}--> ${target}`);
+        return Response.json({ ok: true, action, source, target, type });
+      } catch (e) {
+        return Response.json({ error: "bad_request", message: e.message }, { status: 400 });
+      }
+    }
+
     // POST /mcp/highlight — set or clear a transient highlight overlay
     // body: { neuron_id, state: critical|warning|active|monitoring|clear, reason? }
     if (url.pathname === "/mcp/highlight" && req.method === "POST") {

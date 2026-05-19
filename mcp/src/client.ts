@@ -106,6 +106,22 @@ export type HighlightOverlay = {
   since: string;
 };
 
+export type AddEdgeInput = {
+  source: string;
+  target: string;
+  type:
+    | "connected_to"
+    | "depends_on"
+    | "routes_to"
+    | "manages"
+    | "monitors"
+    | "authenticates"
+    | "contains";
+  weight?: number;
+  bidirectional?: boolean;
+  label?: string;
+};
+
 export type CreateNeuronInput = {
   neuron_id: string;
   display_name: string;
@@ -161,6 +177,12 @@ export const engramClient = {
       | { ok: true; action: "created" | "updated"; neuron_id: string; file: string }
       | { error: string; details?: string[] }
     >("/mcp/upsert_neuron", input),
+
+  addEdge: (input: AddEdgeInput) =>
+    put<
+      | { ok: true; action: "created" | "updated"; source: string; target: string; type: string }
+      | { error: string; details?: string[] }
+    >("/mcp/edge", input),
 
   highlight: (input: {
     neuron_id: string;
