@@ -101,6 +101,54 @@ Highlights are runtime-only (not persisted to neuron files) and broadcast over S
 
 ## Session Log
 
+### 2026-05-18 (continued) — First three scouts, Phase 2 underway, canvas redesign
+
+**Trigger**: Test Engram + Hermes + MCP end-to-end against a real home network, then iterate on canvas + tool gaps as they surfaced.
+
+**Scouts run** (artefacts in `$ENGRAM_DATA_DIR/runs/<slug>/`):
+
+1. **`first-scout-home`** — 17 Engram calls, 1 error (409 dup), 8 new neurons, 2 highlights. Confirmed the canonical read→discover→write→highlight loop works. Surfaced: `upsert_neuron` need, transcript auto-export broken, agent attribution wrong (logs `mcp/0.1.0` not `hermes/0.14.0`).
+2. **`second-scout-deep`** — 17 calls, **zero errors**, 3 new + 9 refined, fixed all 3 `_unbound` boundary bugs. Grok made an architectural decision unprompted: kept `boundary` flat and used `tags` (iot, media, ev, nas/storage…) for orthogonal grouping. Flagged 2 unknown devices as `warning` highlights. Real security value.
+3. **`third-scout-enrich`** — 27 calls. Ran add_edge across the existing graph to declare logical relationships beyond layer-2 connectivity. **Not yet reviewed** — `runs/third-scout-enrich/review.md` blank, ready for next session.
+
+**Load-bearing bugs found + fixed this session**:
+- **YAML parser dropped all edges** — `parseYaml` preferred the "simple scalar" regex over the "object key:value" regex, so `- target: home-gateway` was parsed as a string instead of an object. Every edge silently disappeared; canvas showed 11 floating disconnected nodes. Fix: swap regex order, try object form first. Caught only because the canvas exposed it.
+- **TDZ on `_cameraSizeFactor`** — `let _cameraSizeFactor = 1.0;` was below `initThree()`, so the first frame of `animate()` referenced it pre-init. Fixed by hoisting the size constants up next to other visual constants.
+- **Highlights vanish on server restart** — by design (runtime-only overlay) but bad UX. Long-lived critical/warning probably should persist; transient active/monitoring shouldn't. Noted as future work.
+
+**Phase 2 MCP tools shipped**:
+- `upsert_neuron` (priority #1) — `PUT /mcp/upsert_neuron`. Idempotent create-or-update keyed on neuron_id. Merge semantics: incoming fields overwrite, omitted ones preserve, explicit null clears. Eliminated the 409 problem from scout #1.
+- `add_edge` (priority #4) — `PUT /mcp/edge`. Idempotent on (source, target, type). Source must exist; target can be missing (phantom). Lets agents declare logical relationships post-creation: depends_on, manages, monitors, contains, etc.
+
+Both tools moved to ✅ in `mcp/TOOLS.md`. Remaining Phase 2: `update_neuron` (#2 — partly subsumed by upsert but distinct semantics), `search_neurons` (#3), `append_notes` (#5), `remove_edge` (#6), `delete_neuron` (#7).
+
+**Canvas redesign — full visual overhaul over ~10 iterations** (`canvas.html`):
+- **Colours by entity_type** — five categorical hues (network blue, device purple, component green, resource amber, security red). Replaced single-blue `INFRASTRUCTURE_COLOR` + source_system tints. The toolbar still has source_system in a comment but the active palette is `ENTITY_HUE`.
+- **Cluster force keyed on entity_type** (primary, strength 0.30) + boundary (secondary, 0.10). Same-coloured neurons group. `_unbound` opts out of the boundary force only — still participates in type clustering.
+- **Polygon-mesh lattice per cluster** — for each entity_type cluster, every neuron connects to its 3 nearest cluster-mates via thin LineSegments in cluster colour. NOT data; pure visual scaffold rebuilt every 6 sim ticks. Single draw call per cluster. Hidden when the cluster's filter chip is off.
+- **Tight layout** — `LINK_DISTANCE 160→70`, `CHARGE_STRENGTH -600→-260`, `forceCenter strength 0.04→0.10`. The whole graph reads as one tight assembly instead of satellite blobs.
+- **Bottom toolbar = entity_type filter** — renamed `activeSources → activeEntityTypes` throughout, rewrote `buildLegend` to enumerate types with `ENTITY_HUE` swatches. Canonical order: network → device → component → resource → security. Filter chips toggle whole clusters (spheres + edges + lattice).
+- **Pulse rewrite for attention signal** — `ATTENTION_COLOR 0xff1830` overrides entity_type emissive while a highlight is set. Frequencies bumped 2-4× (critical 2.4 Hz, warning 1.8 Hz, active 1.5 Hz, monitoring 1.3 Hz). Peak emissive 3.4–5.0. Halo also turns red. `baseEmissive` cached on each `nodeObject` so we restore properly when the highlight clears.
+- **Camera-distance sphere/edge sizing** — `updateCameraSizeFactor()` per frame. `SIZE_REF_DIST=700`, factor clamped `[0.45, 1.00]`. Spheres + edge radius scale by factor so screen-size stays roughly constant as you zoom. `SPHERE_RADIUS` dropped 5.78 → 3.0 absolute. Resolves "everything obstructs the view when zoomed in" complaint.
+- **Curved edges experiment reverted** — briefly tried Catmull-Rom dendritic tubes; operator clarified preference was geometric/mesh over organic/biological. Reverted to straight cylinders.
+
+**Connection strategy** (clarified late in session): two distinct systems on the canvas:
+1. Bright cylinders = real data edges declared by agents (currently mostly star-to-gateway).
+2. Faint coloured lines = structural mesh, proximity-based, NOT data.
+
+`add_edge` exists now so future scouts can fatten (1) — operator chose this over dropping (2) or visually disambiguating them.
+
+**To resume next session**:
+1. **Review `third-scout-enrich/review.md`** — write it up based on `engram-calls.jsonl`, `hermes-stdout.txt`. Look for what edges Grok declared, by type, with what confidence.
+2. **Decide next Phase 2 tool**. With upsert + add_edge done, the remaining ranked list is:
+   - `update_neuron` (#2) — mostly subsumed by upsert. Worth shipping? Keep partial-PATCH semantics distinct? Worth a design conversation.
+   - `search_neurons` (#3) — at 14 neurons not yet bottleneck. Becomes load-bearing at 50+.
+   - `append_notes` (#5) — actually a real gap. Upsert replaces the body each time; agents lose context between scouts.
+3. **Hermes transcript auto-export still broken** — regex in `bin/run-hermes.sh` doesn't match Hermes 0.14.0 output. Fix when convenient.
+4. **Agent attribution still wrong** — calls log `mcp/0.1.0` instead of `hermes/0.14.0`. The intercept logic in `mcp/src/server.ts` reads its own clientInfo, not the incoming one.
+
+---
+
 ### 2026-05-18 — Repo cleanup + rename to Engram + security hardening
 
 **Trigger**: Prepare repo for public push to GitHub as `Engram`. Operator
