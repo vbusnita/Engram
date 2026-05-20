@@ -50,11 +50,6 @@
   #focus-indicator.active { display: flex; }
   #focus-indicator .fi-label { color: var(--dim); letter-spacing: 0.08em; }
   #focus-indicator .fi-name  { color: var(--blue); font-weight: 600; }
-  #focus-indicator .fi-clear {
-    cursor: pointer; color: var(--subtle); padding: 0 4px; line-height: 1;
-    font-size: 14px; transition: color 0.15s;
-  }
-  #focus-indicator .fi-clear:hover { color: var(--text); }
 
   #rotate-toggle {
     margin-left: auto;
@@ -230,7 +225,6 @@
   <div id="focus-indicator">
     <span class="fi-label">FOCUS</span>
     <span class="fi-name" id="focus-name"></span>
-    <span class="fi-clear" id="focus-clear" title="Clear focus (Esc)">×</span>
   </div>
   <div id="stats"></div>
   <div id="rotate-toggle" title="Toggle auto-rotate (R)"><b>R</b> <span>ROTATE</span></div>
@@ -290,6 +284,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 // ── Config ────────────────────────────────────────────────────
 
@@ -359,6 +356,13 @@ const SIZE_REF_DIST = 700;
 const SIZE_MIN = 0.45;
 const SIZE_MAX = 1.0;
 let _cameraSizeFactor = 1.0;
+// Edges have a separate, more aggressive shrink factor (lower floor) than
+// nodes. Reason: bloom adds a constant-pixel halo around every edge cylinder,
+// so on zoom-in the apparent thickness compounds — geometric scale must drop
+// harder to compensate. Nodes don't need this; they're already round and read
+// well at the node floor of 0.45.
+let _edgeSizeFactor = 1.0;
+const EDGE_SIZE_MIN = 0.18;
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -368,6 +372,7 @@ let simNodes = [];
 let simLinks = [];
 
 let scene, camera, renderer, labelRenderer, controls, raycaster, pointer;
+let composer, bloomPass;
 let nodeGroup, edgeGroup, hullGroup, structuralGroup, brainShell;
 let structuralLines = [];   // { mesh, material, geometry } per cluster
 const nodeObjects = new Map();   // id → { mesh, material, label, labelDiv }
@@ -421,7 +426,6 @@ initThree();
   window.addEventListener('keydown', onKey);
   elSearch.addEventListener('input', onSearch);
   document.getElementById('detail-close').addEventListener('click', closeDetail);
-  document.getElementById('focus-clear').addEventListener('click', clearFocus);
   document.getElementById('rotate-toggle').addEventListener('click', () => setAutoRotate(!controls.autoRotate));
 
 })();
@@ -439,6 +443,21 @@ function initThree() {
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(w, h);
   elViewport.appendChild(renderer.domElement);
+
+  // Post-processing: bloom on every emissive surface. Threshold is low so
+  // most neurons/edges contribute; strength controls the LED-glow intensity,
+  // radius the spread. Pulse-state highlights (emissive 4-6) bloom hard
+  // and visually read as sirens.
+  composer = new EffectComposer(renderer);
+  composer.setSize(w, h);
+  composer.addPass(new RenderPass(scene, camera));
+  bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(w, h),
+    0.9,    // strength
+    0.6,    // radius
+    0.15,   // threshold
+  );
+  composer.addPass(bloomPass);
 
   labelRenderer = new CSS2DRenderer();
   labelRenderer.setSize(w, h);
@@ -511,12 +530,14 @@ function onResize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
+  if (composer) composer.setSize(w, h);
   labelRenderer.setSize(w, h);
 }
 
 function updateCameraSizeFactor() {
   const camDist = camera.position.length() || SIZE_REF_DIST;
   _cameraSizeFactor = Math.max(SIZE_MIN, Math.min(SIZE_MAX, camDist / SIZE_REF_DIST));
+  _edgeSizeFactor = Math.max(EDGE_SIZE_MIN, Math.min(SIZE_MAX, camDist / SIZE_REF_DIST));
   // Apply to every node mesh. baseScale was captured at create time.
   for (const obj of nodeObjects.values()) {
     if (obj.baseScale != null) {
@@ -533,7 +554,7 @@ function animate() {
   updateCameraSizeFactor();
   pulseHighlights();
 
-  renderer.render(scene, camera);
+  composer.render();
   labelRenderer.render(scene, camera);
 }
 
@@ -555,11 +576,11 @@ function pulseHighlights() {
     const state = n.highlight && n.highlight.state;
     if (state) {
       let freqHz, peakI, peakHalo;
-      if      (state === 'critical')   { freqHz = 2.4; peakI = 5.0; peakHalo = 0.55; }
-      else if (state === 'warning')    { freqHz = 1.8; peakI = 4.2; peakHalo = 0.48; }
-      else if (state === 'active')     { freqHz = 1.5; peakI = 3.6; peakHalo = 0.42; }
-      else if (state === 'monitoring') { freqHz = 1.3; peakI = 3.4; peakHalo = 0.38; }
-      else                              { freqHz = 1.5; peakI = 3.6; peakHalo = 0.42; }
+      if      (state === 'critical')   { freqHz = 2.4; peakI = 6.0; peakHalo = 0.62; }
+      else if (state === 'warning')    { freqHz = 1.8; peakI = 5.0; peakHalo = 0.55; }
+      else if (state === 'active')     { freqHz = 1.5; peakI = 4.4; peakHalo = 0.48; }
+      else if (state === 'monitoring') { freqHz = 1.3; peakI = 4.0; peakHalo = 0.44; }
+      else                              { freqHz = 1.5; peakI = 4.4; peakHalo = 0.48; }
 
       const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 * freqHz);
       const shaped = state === 'critical' ? Math.pow(wave, 2.2) : wave;
@@ -575,10 +596,10 @@ function pulseHighlights() {
       // Default: restore base entity_type emissive + halo. Without this branch,
       // exiting a previous focus-dim or pulse leaves values stuck.
       if (obj.baseEmissive) obj.material.emissive.copy(obj.baseEmissive);
-      obj.material.emissiveIntensity = n.phantom ? 0.0 : 1.7;
+      obj.material.emissiveIntensity = n.phantom ? 0.0 : 2.2;
       if (obj.haloMat) {
         if (obj.baseHaloColor) obj.haloMat.color.copy(obj.baseHaloColor);
-        obj.haloMat.opacity = 0.16;
+        obj.haloMat.opacity = 0.22;
       }
     }
   }
@@ -586,12 +607,42 @@ function pulseHighlights() {
 
 // ── Geometry helpers ──────────────────────────────────────────
 
-let SPHERE_GEOM = null;
-function sphereGeom() {
-  // Low segment count + flatShading = visible facets that scatter light at
-  // different angles — diamond/LED crystalline look rather than smooth orb.
-  if (!SPHERE_GEOM) SPHERE_GEOM = new THREE.SphereGeometry(SPHERE_RADIUS, 10, 7);
-  return SPHERE_GEOM;
+// Per-entity_type body geometry. Shape carries the same categorical signal
+// as colour, so the canvas reads as a topology diagram instead of a coloured
+// particle field. All shapes normalised so bounding-sphere radius ≈
+// SPHERE_RADIUS — keeps degreeScale + forceCollide math unchanged. Low segment
+// counts + flatShading on every shape preserve the crystalline LED look.
+//
+//   network  → octahedron (8-faced junction — routing/switching feel)
+//   device   → cube       (physical hardware)
+//   component→ sphere     (generic — the default)
+//   resource → cylinder   (short, fat — container/storage)
+//   security → tetrahedron(4-faced shard — alert/shield)
+const ENTITY_GEOMS = {};
+function geomForEntity(entityType) {
+  if (ENTITY_GEOMS[entityType]) return ENTITY_GEOMS[entityType];
+  let g;
+  switch (entityType) {
+    case 'network':
+      g = new THREE.OctahedronGeometry(SPHERE_RADIUS, 0);
+      break;
+    case 'device':
+      // Box of side s has bounding-sphere radius s*sqrt(3)/2; solve for s.
+      g = new THREE.BoxGeometry(SPHERE_RADIUS * 1.155, SPHERE_RADIUS * 1.155, SPHERE_RADIUS * 1.155);
+      break;
+    case 'resource':
+      g = new THREE.CylinderGeometry(SPHERE_RADIUS * 0.85, SPHERE_RADIUS * 0.85, SPHERE_RADIUS * 1.5, 8);
+      break;
+    case 'security':
+      g = new THREE.TetrahedronGeometry(SPHERE_RADIUS * 1.05, 0);
+      break;
+    case 'component':
+    default:
+      g = new THREE.SphereGeometry(SPHERE_RADIUS, 10, 7);
+      break;
+  }
+  ENTITY_GEOMS[entityType] = g;
+  return g;
 }
 
 // Procedural brain-shaped outer shell. Two ellipsoidal hemispheres displaced
@@ -830,7 +881,7 @@ function createNodeObject(n) {
   const material = new THREE.MeshStandardMaterial({
     color: col,
     emissive: col,
-    emissiveIntensity: n.phantom ? 0.0 : 1.5,
+    emissiveIntensity: n.phantom ? 0.0 : 2.0,
     metalness: 0.05,
     roughness: 0.08,
     flatShading: true,
@@ -839,7 +890,7 @@ function createNodeObject(n) {
     wireframe: !!n.phantom,
     depthWrite: true,
   });
-  const mesh = new THREE.Mesh(sphereGeom(), material);
+  const mesh = new THREE.Mesh(geomForEntity(n.entity_type), material);
   const s = degreeScale(n.degree || 0);
   mesh.scale.setScalar(s);
   mesh.userData = { id: n.id };
@@ -853,12 +904,12 @@ function createNodeObject(n) {
     haloMat = new THREE.MeshBasicMaterial({
       color: col,
       transparent: true,
-      opacity: 0.16,
+      opacity: 0.22,
       depthWrite: false,
       side: THREE.BackSide,
       blending: THREE.AdditiveBlending,
     });
-    haloMesh = new THREE.Mesh(sphereGeom(), haloMat);
+    haloMesh = new THREE.Mesh(geomForEntity(n.entity_type), haloMat);
     haloMesh.scale.setScalar(2.6);
     haloMesh.raycast = () => {};
     mesh.add(haloMesh);
@@ -898,12 +949,12 @@ function createEdgeObject(link) {
   const material = new THREE.MeshStandardMaterial({
     color: colHex,
     emissive: phantomEdge ? 0x000000 : colHex,
-    emissiveIntensity: phantomEdge ? 0.0 : 0.8,
-    roughness: phantomEdge ? 0.98 : 0.45,
+    emissiveIntensity: phantomEdge ? 0.0 : 1.2,
+    roughness: phantomEdge ? 0.98 : 0.35,
     metalness: 0.0,
     flatShading: true,
     transparent: true,
-    opacity: phantomEdge ? 0.28 : 0.60,
+    opacity: phantomEdge ? 0.28 : 0.85,
     depthWrite: !phantomEdge,
   });
   const mesh = new THREE.Mesh(unitCylinder(), material);
@@ -1182,7 +1233,7 @@ function onTick() {
     eo.mesh.position.set((s.x + t.x) / 2, (s.y + t.y) / 2, (sz + tz) / 2);
     TMP_DIR.set(dx / len, dy / len, dz / len);
     eo.mesh.quaternion.setFromUnitVectors(TMP_UP, TMP_DIR);
-    const radius = (0.30 + 0.45 * (eo.link.weight || 0.5)) * _cameraSizeFactor;
+    const radius = (0.12 + 0.20 * (eo.link.weight || 0.5)) * _edgeSizeFactor;
     eo.mesh.scale.set(radius, len, radius);
   }
   // Structural mesh — faint per-cluster lattice. Updated every few ticks.
