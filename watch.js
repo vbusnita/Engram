@@ -163,9 +163,49 @@ const graphWarnings = [];
 
 // Runtime-only highlight overlay. Not persisted to neuron files —
 // highlights are transient visual signals from agent operations.
-// Map<neuron_id, { state, reason, since }>  state ∈ critical|warning|active|monitoring
+// Map<neuron_id, { state, reason, since, auto? }>  state ∈ critical|warning|active|monitoring
+// auto:true marks pulses set by pulseActivity() (write side-effect, self-clearing);
+// without it, the entry is a deliberate /mcp/highlight call from an agent.
 const highlights = new Map();
 const HIGHLIGHT_STATES = new Set(["critical", "warning", "active", "monitoring"]);
+
+// Auto-pulse: every write (create/upsert/add_edge) flashes the affected neurons
+// `active` for ACTIVITY_PULSE_MS so the canvas always shows what the agent is
+// doing right now, even when the agent never calls /mcp/highlight itself. A
+// manual highlight on the same neuron always wins — auto entries never stomp
+// manual ones, and the auto timer never clears a manual highlight.
+const ACTIVITY_PULSE_MS = 2000;
+const activityTimers = new Map(); // neuron_id -> Timeout
+
+function pulseActivity(neuron_id) {
+  if (!neuron_id) return;
+  const existing = highlights.get(neuron_id);
+  if (existing && !existing.auto) return; // manual wins — don't touch it
+
+  highlights.set(neuron_id, {
+    state: "active",
+    reason: "auto:write",
+    since: new Date().toISOString(),
+    auto: true,
+  });
+
+  const prev = activityTimers.get(neuron_id);
+  if (prev) clearTimeout(prev);
+  const handle = setTimeout(() => {
+    activityTimers.delete(neuron_id);
+    const h = highlights.get(neuron_id);
+    if (h && h.auto) {
+      highlights.delete(neuron_id);
+      broadcast("graph-update", graphWithHighlights());
+    }
+  }, ACTIVITY_PULSE_MS);
+  activityTimers.set(neuron_id, handle);
+}
+
+function cancelActivityTimer(neuron_id) {
+  const t = activityTimers.get(neuron_id);
+  if (t) { clearTimeout(t); activityTimers.delete(neuron_id); }
+}
 
 function graphWithHighlights() {
   const nodes = knowledgeGraph.nodes.map(n => {
@@ -585,6 +625,7 @@ async function dispatch(req, url) {
         writeFileSync(file, md, "utf8");
         // Force immediate rebuild so the response reflects new state
         buildGraph();
+        pulseActivity(data.neuron_id);
         broadcast("graph-update", graphWithHighlights());
         console.log(`＋  neuron: ${data.neuron_id}`);
         return Response.json({ ok: true, neuron_id: data.neuron_id, file: relative(DATA_DIR, file) });
@@ -643,6 +684,7 @@ async function dispatch(req, url) {
         const md = renderNeuronMarkdown(merged);
         writeFileSync(file, md, "utf8");
         buildGraph();
+        pulseActivity(incoming.neuron_id);
         broadcast("graph-update", graphWithHighlights());
         const action = exists ? "updated" : "created";
         console.log(`↻  upsert (${action}): ${incoming.neuron_id}`);
@@ -698,6 +740,8 @@ async function dispatch(req, url) {
 
         writeFileSync(sourceFile, renderNeuronMarkdown(fm), "utf8");
         buildGraph();
+        pulseActivity(source);
+        pulseActivity(target);
         broadcast("graph-update", graphWithHighlights());
         console.log(`→  edge ${action}: ${source} --${type}--> ${target}`);
         return Response.json({ ok: true, action, source, target, type });
@@ -714,6 +758,9 @@ async function dispatch(req, url) {
         if (!neuron_id) return Response.json({ error: "neuron_id required" }, { status: 400 });
         const node = knowledgeGraph.nodes.find(n => n.id === neuron_id);
         if (!node) return Response.json({ error: "not_found" }, { status: 404 });
+        // Manual highlight always wins over auto-activity pulses. Cancel any
+        // pending auto-clear timer so it can't wipe a deliberate signal later.
+        cancelActivityTimer(neuron_id);
         if (state === "clear" || state == null) {
           highlights.delete(neuron_id);
         } else if (HIGHLIGHT_STATES.has(state)) {
@@ -728,10 +775,14 @@ async function dispatch(req, url) {
       }
     }
 
-    // GET /mcp/list_highlights — current overlay
+    // GET /mcp/list_highlights — current overlay (manual signals only).
+    // Auto-activity pulses are excluded so agents don't read their own
+    // write trails as if they were deliberate operational signals.
     if (url.pathname === "/mcp/list_highlights") {
       return Response.json({
-        highlights: [...highlights.entries()].map(([id, h]) => ({ neuron_id: id, ...h })),
+        highlights: [...highlights.entries()]
+          .filter(([, h]) => !h.auto)
+          .map(([id, h]) => ({ neuron_id: id, ...h })),
       });
     }
 
