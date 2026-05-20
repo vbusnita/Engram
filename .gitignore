@@ -6,6 +6,13 @@
 # that might drift into the working tree by accident.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─── Claude-only docs (local operating instructions, not part of Engram) ───
+# CLAUDE.md is the resume-fast guide + behavioral guidelines for Claude Code
+# sessions. Useless to anyone browsing the repo and exposes private
+# collaboration style — kept local only. progress.md and the *.md docs under
+# mcp/ and runs/ are public Engram docs and remain tracked.
+CLAUDE.md
+
 # ─── User data (defensive — should never be in the repo anyway) ───
 # If someone overrides ENGRAM_DATA_DIR to point inside the repo, these guard.
 neurons/
