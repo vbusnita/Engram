@@ -193,6 +193,12 @@ export const engramClient = {
       "/mcp/highlight",
       input,
     ),
+
+  appendNotes: (input: { neuron_id: string; text: string; author?: string }) =>
+    post<
+      | { ok: true; neuron_id: string; appended_at: string; total_notes: number; bytes: number }
+      | { error: string; details?: string[]; limit_bytes?: number; bytes?: number }
+    >("/mcp/append_notes", input),
 };
 
 export const engramUrl = ENGRAM_URL;

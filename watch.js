@@ -750,6 +750,56 @@ async function dispatch(req, url) {
       }
     }
 
+    // POST /mcp/append_notes — timestamped append to a neuron's markdown body.
+    // body: { neuron_id, text, author? }
+    // The cross-session memory primitive: scouts use this to leave evidence
+    // and reasoning for the next scout to read. Each call adds a new H3
+    // block timestamped + bylined; not idempotent by design. Author
+    // resolution: explicit `author` arg > X-Engram-Agent header > "unknown".
+    // Hard-rejects payloads >64 KB; agents should keep individual notes
+    // under 4 KB for readability (enforced via tool description, not here).
+    if (url.pathname === "/mcp/append_notes" && req.method === "POST") {
+      try {
+        const { neuron_id, text, author } = await req.json();
+        const errs = [];
+        if (!neuron_id || !/^[a-z0-9][a-z0-9-]*$/.test(neuron_id)) errs.push("neuron_id required (kebab-case)");
+        if (typeof text !== "string" || text.trim() === "")        errs.push("text required (non-empty string)");
+        if (errs.length) return Response.json({ error: "validation_failed", details: errs }, { status: 400 });
+
+        const NOTE_MAX_BYTES = 65536;
+        const textBytes = enc.encode(text).length;
+        if (textBytes > NOTE_MAX_BYTES) {
+          return Response.json({ error: "payload_too_large", bytes: textBytes, limit_bytes: NOTE_MAX_BYTES }, { status: 413 });
+        }
+
+        const file = join(NEURONS, `${neuron_id}.md`);
+        if (!existsSync(file)) {
+          return Response.json({ error: "not_found", neuron_id }, { status: 404 });
+        }
+
+        const content = readFileSync(file, "utf8");
+        const fm = parseFrontmatter(content) || {};
+        const body = content.replace(/^---[\s\S]*?---\s*/, "").trimEnd();
+
+        const ts = new Date().toISOString();
+        const who = author || req.headers.get("x-engram-agent") || "unknown";
+        const block = `### ${ts} — ${who}\n\n${text.trim()}\n`;
+        const newBody = body ? `${body}\n\n${block}` : block;
+        fm.notes = newBody;
+
+        writeFileSync(file, renderNeuronMarkdown(fm), "utf8");
+        buildGraph();
+        pulseActivity(neuron_id);
+        broadcast("graph-update", graphWithHighlights());
+
+        const totalNotes = (newBody.match(/^### \d{4}-\d{2}-\d{2}T/gm) || []).length;
+        console.log(`✎  append: ${neuron_id} (+${textBytes}b, ${totalNotes} blocks)`);
+        return Response.json({ ok: true, neuron_id, appended_at: ts, total_notes: totalNotes, bytes: textBytes });
+      } catch (e) {
+        return Response.json({ error: "bad_request", message: e.message }, { status: 400 });
+      }
+    }
+
     // POST /mcp/highlight — set or clear a transient highlight overlay
     // body: { neuron_id, state: critical|warning|active|monitoring|clear, reason? }
     if (url.pathname === "/mcp/highlight" && req.method === "POST") {
