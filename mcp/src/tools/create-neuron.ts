@@ -80,7 +80,10 @@ export const createNeuronTool: Tool = {
                 "contains",
               ],
             },
-            weight: { type: "number", minimum: 0, maximum: 1 },
+            weight: {
+              type: "number", minimum: 0, maximum: 1,
+              description: "Relationship strength (not confidence). See add_edge for the full scale.",
+            },
             bidirectional: { type: "boolean" },
             label: { type: "string" },
           },

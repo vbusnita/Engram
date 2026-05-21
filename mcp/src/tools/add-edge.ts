@@ -44,7 +44,12 @@ export const addEdgeTool: Tool = {
         type: "number",
         minimum: 0,
         maximum: 1,
-        description: "Strength / confidence in the relationship. Default 0.6.",
+        description:
+          "Relationship strength — how much does A need B? 0.95 = critical " +
+          "(A breaks immediately without B), 0.7 = strong (A is degraded), " +
+          "0.5 = moderate (A uses B but has fallbacks), 0.3 = weak (failure " +
+          "of B has limited impact on A). NOT a confidence score — if you " +
+          "can't justify the edge, don't declare it. Default 0.6.",
       },
       bidirectional: {
         type: "boolean",

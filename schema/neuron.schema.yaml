@@ -68,7 +68,15 @@ optional_fields:
           - monitors
           - authenticates
           - contains
-      weight: { type: float, default: 0.6 }
+      weight:
+        type: float
+        default: 0.6
+        description: >
+          Relationship strength — how much does A need B? 0.95 critical,
+          0.7 strong, 0.5 moderate, 0.3 weak. NOT a confidence score: if a
+          scout can't justify the edge, it should not declare it at all.
+          Used by the canvas for edge thickness and by future blast-radius
+          analysis.
       bidirectional: { type: boolean, default: false }
       label: string
 
