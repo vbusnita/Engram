@@ -812,7 +812,10 @@ Bun.serve({
     // MCP request: dispatch with logging wrapper.
     const start = Date.now();
     let args = null;
-    if (req.method === "POST") {
+    // Capture JSON body on any verb that carries one. Previously only POST
+    // was captured, so PUT-based tools (upsert_neuron, add_edge) logged
+    // `args: null` and review.md had to reconstruct intent from stdout.
+    if (req.method !== "GET" && req.method !== "HEAD") {
       try { args = await req.clone().json(); } catch {}
     }
 
